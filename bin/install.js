@@ -8,10 +8,16 @@
  *   npx -y @lqmnwido/dreams-ai-skills
  *
  * The installer never writes outside the current working directory, never
- * modifies source, and never installs a package. It writes two things:
+ * modifies source, and never installs an npm package. It writes:
  *
  *   AGENTS.md                    the router every AI agent reads first
  *   .docs/project-governance/**  the governance tree
+ *   README.md                    a routes / API table, between markers only
+ *
+ * and, when `--parts` asks for it, the two repositories a new module is made
+ * of (`<slug>_fe` and `<slug>_be`). The one thing it may start is a local
+ * MinIO container — and only after an explicit `--minio=install` or a yes at
+ * the prompt; a non-interactive run prints the commands instead of acting.
  *
  * A previous install is detected and preserved unless `--force` is given; in
  * that case the originals are backed up next to the new files rather than
@@ -25,21 +31,27 @@ const path = require("path");
 
 const skills = require("../index.js");
 const { createPrompter } = require("../lib/prompt");
+const readmeLib = require("../lib/readme");
+const scaffoldLib = require("../lib/scaffold");
+const minioLib = require("../lib/minio");
 
 function sha256(text) {
   return crypto.createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-const BOOLEAN_FLAGS = new Set(["force", "yes", "dry-run", "check", "uninstall", "quiet", "help", "self"]);
+const BOOLEAN_FLAGS = new Set(["force", "yes", "dry-run", "check", "uninstall", "quiet", "help", "self", "no-readme"]);
 const VALUE_FLAGS = new Set([
   "scope",
   "kind",
   "module",
   "display",
+  "slug",
+  "parts",
   "submodule",
   "usecase",
   "role",
   "port",
+  "backend-port",
   "route-prefix",
   "apis",
   "shell",
@@ -48,7 +60,9 @@ const VALUE_FLAGS = new Set([
   "owner",
   "deploy",
   "blast-radius",
-  "confirm-identity"
+  "confirm-identity",
+  "minio",
+  "bucket"
 ]);
 
 const HELP = `
@@ -60,24 +74,38 @@ const HELP = `
 
   What it writes
     AGENTS.md                    the router every AI agent reads first
-    .docs/project-governance/**  the governance tree (30 documents)
+    .docs/project-governance/**  the governance tree (33 documents)
+    README.md                    a routes / API table between markers
+    <slug>_fe/, <slug>_be/       only when --parts asks for them
 
   Intake (every question has a matching flag, so the whole flow is scriptable)
     --scope=<id>              new-feature | change-request | debug
-    --kind=<id>               shell | remote-module | shared-ui | backend-api
-    --module=<name>           federation remote name, e.g. v2t
-    --display=<label>         display name, e.g. V2T
+    --kind=<id>               shell | remote-module | shared-ui | backend-api | module-pair
+    --module=<name>           federation remote name, e.g. v2t, module-demo
+    --display=<label>         display name, e.g. V2T, Module Demo
+    --slug=<slug>             module slug: bucket, repository names, Java package
+    --parts=<id>              both | frontend | backend | docs
     --submodule=<a,b>         sub-module names, e.g. program/senarai-program
     --usecase=<text>          one-line use case (repeatable)
     --route-prefix=/v2t       Shell route prefix
     --role=<roleId>           role id granting access, e.g. adminv2t
     --port=<port|n/a>         local development port
+    --backend-port=<port>     port of this module's own service
     --apis=<A,B>              backend API base env vars
     --shell=<path>            path or URL of the Shell repository
     --ui-dep=<value>          @2enapps/ui dependency, or n/a
     --name=<repoName>         repository name
     --owner=<name>            owning team or engineer
     --deploy=<id>             static | container | library | unknown
+
+  Object storage
+    --minio=<mode>            auto | install | check | skip
+                               auto     detect, ask before doing anything
+                               install  start MinIO in Docker and create the bucket
+                               check    report status only
+                               skip     do not look
+    --bucket=<name>           override the bucket (default: the module slug)
+    --no-readme               leave README.md untouched
 
   Behaviour
     --yes        non-interactive; use flag values and derived defaults
@@ -230,6 +258,89 @@ function describeDetection(report) {
   return label;
 }
 
+/**
+ * Intake answers that a later run must not be asked to invent again.
+ *
+ * A repository's identity is established once. Re-running the installer after
+ * scaffolding must not ask which slug the module has — and more importantly,
+ * must not *derive* a different one, because the derived value names the two
+ * repositories and the object-storage bucket. Deriving `module_fe` where the
+ * first run wrote `module_demo_fe` creates a second pair of repositories
+ * nobody asked for, in the same directory, and the answer is only visible
+ * several lines into the output.
+ */
+const CARRY_FORWARD = [
+  "SCOPE_KIND",
+  "MODULE_KIND",
+  "MODULE_NAME",
+  "MODULE_DISPLAY",
+  "MODULE_SLUG",
+  "SCAFFOLD",
+  "SUBMODULES",
+  "USE_CASE",
+  "BLAST_RADIUS",
+  "ROUTE_PREFIX",
+  "ROLE_KEY",
+  "REMOTE_PORT",
+  "BACKEND_PORT",
+  "API_BASES",
+  "SHELL_REPO",
+  "UI_DEPENDENCY",
+  "REPO_NAME",
+  "OWNER",
+  "DEPLOY_TARGET"
+];
+
+/** Flag name → answer key, so a flag applies even when its question does not run. */
+const FLAG_KEYS = {
+  scope: "SCOPE_KIND",
+  kind: "MODULE_KIND",
+  module: "MODULE_NAME",
+  display: "MODULE_DISPLAY",
+  slug: "MODULE_SLUG",
+  parts: "SCAFFOLD",
+  submodule: "SUBMODULES",
+  usecase: "USE_CASE",
+  "route-prefix": "ROUTE_PREFIX",
+  role: "ROLE_KEY",
+  port: "REMOTE_PORT",
+  "backend-port": "BACKEND_PORT",
+  apis: "API_BASES",
+  shell: "SHELL_REPO",
+  "ui-dep": "UI_DEPENDENCY",
+  "blast-radius": "BLAST_RADIUS",
+  name: "REPO_NAME",
+  owner: "OWNER",
+  deploy: "DEPLOY_TARGET",
+  "confirm-identity": "CONFIRM_IDENTITY"
+};
+
+/** Flags that change behaviour rather than answer a question. */
+const BEHAVIOUR_FLAGS = new Set([
+  "force",
+  "yes",
+  "dry-run",
+  "check",
+  "uninstall",
+  "quiet",
+  "help",
+  "self",
+  "no-readme",
+  "minio",
+  "bucket"
+]);
+
+function readPreviousInstall(cwd) {
+  const file = path.join(cwd, skills.DOCS_DIR, "install.json");
+  if (!fs.existsSync(file)) return null;
+  try {
+    const state = JSON.parse(fs.readFileSync(file, "utf8"));
+    return state && state.context ? state.context : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function runIntake(report, flags, quiet) {
   const flow = skills.buildFlow(report);
   const interactive = Boolean(flags.yes) ? false : process.stdin.isTTY;
@@ -241,6 +352,28 @@ async function runIntake(report, flags, quiet) {
     flow: flow.flow,
     _answers: {}
   };
+
+  // An explicit flag wins over everything, including what a previous install
+  // recorded: it is the one value in this run that somebody typed on purpose.
+  for (const [flag, key] of Object.entries(FLAG_KEYS)) {
+    if (flags[flag] !== undefined && context[key] === undefined) context[key] = flags[flag];
+  }
+
+  // What the repository already is, seeded before the questions run so a
+  // question's own default can be phrased in terms of it. A question that
+  // produces a real answer overwrites this; one that has no answer — which in a
+  // non-interactive re-run is most of them — leaves it standing, and that is
+  // the point: re-rendering the governance tree with `{{USE_CASE}}` where a
+  // sentence used to be is a regression, not an honest hole.
+  const previous = readPreviousInstall(report.cwd);
+  if (previous) {
+    for (const key of CARRY_FORWARD) {
+      const value = previous[key];
+      if (value === undefined || value === null || value === "") continue;
+      if (context[key] !== undefined) continue;
+      context[key] = value;
+    }
+  }
 
   if (!quiet) {
     heading(`2. Intake — ${flow.flow === "new" ? "new repository" : "existing module"}`);
@@ -263,11 +396,344 @@ async function runIntake(report, flags, quiet) {
 
   prompter.close();
 
-  for (const key of prompter.missing) {
+  /*
+   * What this run is keeping, and what it is replacing.
+   *
+   * Priority is explicit → remembered → derived. A flag or a typed answer wins
+   * outright: that is somebody saying otherwise, now. A value from the previous
+   * install beats a derived default, because a default is a guess about a
+   * repository whose real answer is already recorded — `path.basename(cwd)`
+   * as the repository name is right exactly once, on the run that created the
+   * directory, and every run after that would rename the module by accident.
+   */
+  const sourceByKey = new Map();
+  for (const entry of prompter.asked) sourceByKey.set(entry.key, entry.source);
+
+  const carried = [];
+  if (previous) {
+    for (const key of CARRY_FORWARD) {
+      const remembered = previous[key];
+      if (remembered === undefined || remembered === null || remembered === "") continue;
+      const source = sourceByKey.get(key);
+      if (source === "flag" || source === "prompt") continue;
+      if (context[key] !== remembered) context[key] = remembered;
+      carried.push(key);
+    }
+  }
+
+  if (carried.length) {
+    log("→", `carried from the previous install: ${carried.join(", ")}`, quiet);
+  }
+
+  // A flag that maps to nothing this intake knows about is the only kind of
+  // mistake worth printing here. Every other flag either answers a question in
+  // this flow or is applied to the context directly, so calling those "unused"
+  // would be false — `--parts`, for instance, governs the scaffold and the README
+  // step rather than a question, and `--blast-radius` still lands in the context
+  // in a flow that never asks it.
+  const claimed = new Set(flow.questions.map((question) => question.flag).filter(Boolean));
+  const unknown = Object.keys(flags).filter(
+    (flag) => !claimed.has(flag) && !BEHAVIOUR_FLAGS.has(flag) && !Object.prototype.hasOwnProperty.call(FLAG_KEYS, flag)
+  );
+  if (unknown.length) {
+    log("!", `flag(s) this intake does not recognise: ${unknown.join(", ")}`, quiet);
+  }
+
+  const carriedKeys = new Set(carried);
+  const asked = [
+    ...prompter.asked.filter((entry) => !carriedKeys.has(entry.key)),
+    ...carried.map((key) => ({ key, source: "previous install", value: context[key] }))
+  ];
+
+  // A question reported as unanswered whose value the previous install supplied
+  // is not unresolved — printing it as such would send someone to fill in a
+  // placeholder that is already a real value two lines further down.
+  const missing = prompter.missing.filter((key) => {
+    const value = context[key];
+    return value === undefined || value === null || value === "" || value === skills.UNANSWERED;
+  });
+
+  for (const key of missing) {
     log("!", `${key} is unresolved — it will be written as {{${key}}}`, quiet);
   }
 
-  return { context: skills.buildContext(report, context), flow: flow.flow, asked: prompter.asked };
+  return { context: skills.buildContext(report, context), flow: flow.flow, asked };
+}
+
+/**
+ * Which generated tables this repository's README carries.
+ *
+ * A frontend module documents the routes the Shell will register; a backend
+ * service documents the endpoints it answers. The Shell and the shared UI
+ * package get neither — a table of routes read out of an empty scan would be
+ * invented, and an invented table is worse than none.
+ */
+function readmeModes(context, report) {
+  const parts = context.SCAFFOLD || "docs";
+  const kind = context.MODULE_KIND || report.kind;
+  const modes = [];
+  const push = (mode) => {
+    if (!modes.includes(mode)) modes.push(mode);
+  };
+
+  if (parts === "both" || parts === "frontend") push("routes");
+  if (parts === "both" || parts === "backend") push("api");
+  if (parts === "docs") {
+    if (kind === "remote-module") push("routes");
+    if (kind === "backend-api") push("api");
+  }
+  return modes;
+}
+
+/**
+ * Where a generated table belongs.
+ *
+ * A frontend module documents the routes the Shell will register, and that
+ * README is `<slug>_fe/README.md` — not the workspace's. A backend service
+ * documents the endpoints it answers, and that README is `<slug>_be/README.md`.
+ * Falling back to the current directory keeps the rule true for a single
+ * repository install, where the repository *is* the module.
+ */
+function readmeTarget(mode, cwd, context) {
+  const repository = mode === "api" ? context.BACKEND_REPO : context.FRONTEND_REPO;
+  const candidate = repository ? path.join(cwd, repository) : cwd;
+  return fs.existsSync(candidate) ? candidate : cwd;
+}
+
+/**
+ * Rows for one table, read from the repository that actually holds them. For a
+ * `module-pair` workspace that means the frontend table comes from
+ * `<slug>_fe` and the API table from `<slug>_be`, never from the workspace
+ * directory, which contains neither.
+ */
+function rowsFor(mode, root, context) {
+  const detected = mode === "api" ? readmeLib.detectApis(root) : readmeLib.detectRoutes(root);
+  if (detected.length) return detected;
+  return mode === "api" ? readmeLib.derivedApis(context) : readmeLib.derivedRoutes(context);
+}
+
+async function runReadmeStep({ context, report, flags, dryRun, quiet }) {
+  const state = {};
+
+  if (flags["no-readme"]) {
+    log("–", "README left untouched (--no-readme)", quiet);
+    return state;
+  }
+
+  const modes = readmeModes(context, report);
+  if (!modes.length) return state;
+
+  heading("6. README");
+
+  for (const mode of modes) {
+    const target = readmeTarget(mode, report.cwd, context);
+    const rows = rowsFor(mode, target, context);
+    const block = readmeLib.render(mode, rows);
+    const where = path.relative(report.cwd, path.join(target, readmeLib.README_NAME));
+
+    if (dryRun) {
+      log("○", `would write the ${mode} table to ${where} (${rows.length} rows)`, quiet);
+      state[mode] = { action: "dry", rows: rows.length, path: where.split(path.sep).join("/") };
+      continue;
+    }
+
+    const outcome = readmeLib.updateReadme(target, mode, block);
+    state[mode] = {
+      action: outcome.action,
+      rows: rows.length,
+      path: path.relative(report.cwd, outcome.file).split(path.sep).join("/"),
+      // Uninstall needs to know whether *we* created the file: deleting a
+      // README a developer wrote in order to hold a table of ours would be
+      // removing their work under our marker.
+      created: outcome.action === "created"
+    };
+
+    const messages = {
+      created: `created ${where} with the ${mode} table (${rows.length} rows)`,
+      appended: `appended the ${mode} table to ${where} (${rows.length} rows)`,
+      refreshed: `refreshed the ${mode} table in ${where} (${rows.length} rows)`,
+      unchanged: `${mode} table in ${where} already current`
+    };
+    log(outcome.action === "unchanged" ? "–" : "✓", messages[outcome.action] || outcome.action, quiet);
+  }
+
+  return state;
+}
+
+/**
+ * The two repositories a new module is made of.
+ *
+ * The same `writeFileSafe` rules apply as to the governance tree: a file that
+ * already exists is kept, and `--force` backs it up first. Scaffolding is not a
+ * special case where the installer overwrites a repository a developer has
+ * already started.
+ */
+function runScaffoldStep({ context, report, flags, dryRun, quiet }) {
+  const parts = context.SCAFFOLD || "docs";
+  if (parts === "docs") return { hashes: {}, files: [], repositories: [], unresolvedTokens: [], unresolvedPaths: [] };
+
+  heading("5. Scaffold");
+  const plan = scaffoldLib.plan(context);
+  const hashes = {};
+
+  for (const file of plan.files) {
+    const target = path.join(report.cwd, file.relative);
+    const status = writeFileSafe(target, file.content, {
+      force: Boolean(flags.force),
+      dryRun,
+      quiet
+    });
+
+    // A file this run refused to overwrite still counts as ours while it is
+    // byte-identical to what the scaffold produced. Recording the hash only for
+    // files we actually wrote would empty the record on every re-install — the
+    // common case — and uninstall would then have nothing to compare against
+    // and would keep every scaffolded file forever.
+    let matches = status === "written";
+    if (!matches && !dryRun) {
+      try {
+        matches = fs.readFileSync(target, "utf8") === file.content;
+      } catch (err) {
+        matches = false;
+      }
+    }
+    if (matches) hashes[file.relative] = sha256(file.content);
+  }
+
+  if (plan.unresolvedPaths.length) {
+    log("!", "skipped files whose path could not be resolved:", quiet);
+    for (const entry of plan.unresolvedPaths) log(" ", entry, quiet);
+  }
+
+  log("→", `${plan.files.length} file(s) across ${plan.repositories.length} repositories: ${plan.repositories.join(", ")}`, quiet);
+  return { ...plan, hashes };
+}
+
+/** Ask once, in a terminal, and never in a pipeline. */
+async function askInstallMinio(flags) {
+  if (!process.stdin.isTTY || flags.yes) return false;
+  const prompter = createPrompter({ interactive: true });
+  const answer = await prompter.ask(
+    {
+      key: "MINIO_INSTALL",
+      type: "confirm",
+      prompt: "No MinIO is running locally. Start one in Docker and create this module's bucket?",
+      default: () => true
+    },
+    {}
+  );
+  prompter.close();
+  return answer === true;
+}
+
+/**
+ * Reach object storage, and make sure this module's bucket exists.
+ *
+ * The three rules this step follows:
+ *
+ *   - it installs only on explicit consent — an `--minio=install` flag or a
+ *     yes at the prompt. A non-interactive run with no flag prints commands
+ *     instead, because a pipeline cannot grant permission on anyone's behalf.
+ *   - it never invents a bucket name. The bucket is the module slug, or
+ *     `--bucket`, and the service reads the same value from its own `.env`.
+ *   - it always reports what it did and what it could not do. An install that
+ *     silently half-succeeded leaves a service that fails on its first upload.
+ */
+async function runMinioStep({ context, report, flags, dryRun, quiet }) {
+  // The heading comes first whatever the outcome. A skipped section that prints
+  // nothing leaves the numbered steps running 6 → 8, and a reader reasonably
+  // concludes a step failed rather than that it declined to run.
+  heading("7. MinIO");
+
+  const rawPolicy = typeof flags.minio === "string" ? flags.minio.trim().toLowerCase() : null;
+  if (rawPolicy === "skip") {
+    log("–", "skipped (--minio=skip)", quiet);
+    return { skipped: true };
+  }
+
+  const explicit = rawPolicy !== null && rawPolicy !== "";
+  const parts = context.SCAFFOLD || "docs";
+  const kind = context.MODULE_KIND || report.kind;
+  const backendHere = parts === "both" || parts === "backend" || kind === "backend-api";
+  if (!explicit && !backendHere) {
+    log("–", "no backend in this install — nothing to store, no bucket to create", quiet);
+    return null;
+  }
+
+  const bucket = String(flags.bucket || context.BUCKET || "").trim();
+  if (!bucket) {
+    log("–", "no module slug, so no bucket name — nothing to do", quiet);
+    return null;
+  }
+
+  const endpoint = process.env.MINIO_ENDPOINT || context.MINIO_ENDPOINT || minioLib.DEFAULT_ENDPOINT;
+  const policy = explicit ? rawPolicy : "auto";
+  const state = { endpoint, bucket, policy };
+
+  const status = await minioLib.detect({ endpoint });
+  state.detect = { running: status.running, reason: status.reason, docker: status.docker };
+
+  if (status.running) {
+    log("✓", `MinIO reachable at ${endpoint}`);
+    if (dryRun) {
+      log("○", `would ensure bucket ${bucket}`);
+      state.action = "dry";
+      return state;
+    }
+    const bucketResult = await minioLib.ensureBucket(bucket, { endpoint });
+    state.bucketResult = { ok: bucketResult.ok, status: bucketResult.status, existed: bucketResult.existed };
+    if (bucketResult.ok) {
+      log(bucketResult.existed ? "=" : "+", `bucket ${bucket} ${bucketResult.existed ? "already present" : "created"}`, quiet);
+    } else {
+      log("!", `bucket ${bucket} not confirmed (${bucketResult.status}): ${bucketResult.body}`, quiet);
+    }
+    return state;
+  }
+
+  log("!", `no MinIO at ${endpoint} — ${status.reason}`, quiet);
+
+  let install = policy === "install";
+  if (policy === "auto") {
+    install = await askInstallMinio(flags);
+  }
+
+  if (dryRun) {
+    log("○", install ? "would start MinIO in Docker and create the bucket" : "would print the install commands", quiet);
+    state.action = "dry";
+    return state;
+  }
+
+  if (!install) {
+    if (policy === "auto" && !process.stdin.isTTY) {
+      log("→", "non-interactive run — not installing anything. Pass --minio=install to let it.", quiet);
+    }
+    log("→", "to start MinIO and create the bucket by hand:", quiet);
+    for (const line of minioLib.instructions(bucket, { endpoint }).split("\n")) console.log(`      ${line}`);
+    state.action = "instructions";
+    return state;
+  }
+
+  log("→", "starting MinIO in Docker…", quiet);
+  const started = await minioLib.install({ endpoint });
+  state.install = { ok: started.ok, step: started.step, detail: started.detail, container: started.container };
+  if (!started.ok) {
+    log("✗", `MinIO did not start at ${started.step}: ${started.detail}`, quiet);
+    log("→", "run it by hand:", quiet);
+    for (const line of minioLib.instructions(bucket, { endpoint }).split("\n")) console.log(`      ${line}`);
+    return state;
+  }
+
+  log("✓", started.detail, quiet);
+  const bucketResult = await minioLib.ensureBucket(bucket, { endpoint });
+  state.bucketResult = { ok: bucketResult.ok, status: bucketResult.status, existed: bucketResult.existed };
+  if (bucketResult.ok) {
+    log("+", `bucket ${bucket} ready`, quiet);
+  } else {
+    log("!", `bucket ${bucket} not confirmed (${bucketResult.status}): ${bucketResult.body}`, quiet);
+    log("→", "create it by hand:", quiet);
+    for (const line of minioLib.instructions(bucket, { endpoint }).split("\n")) console.log(`      ${line}`);
+  }
+  return state;
 }
 
 function renderPlan(context, report) {
@@ -292,10 +758,13 @@ function printSummary(result, context, flow, written, quiet) {
   const kept = Object.values(written).filter((v) => v === "kept").length;
 
   if (!quiet) {
-    heading("4. Result");
+    heading("8. Result");
     log("→", `flow: ${flow}`);
     log("→", `module: ${context.MODULE_NAME} (${context.MODULE_DISPLAY}) · ${context.SCOPE_KIND}`);
     log("→", `files: ${total} written, ${kept} kept`);
+    if (context.MODULE_SLUG) {
+      log("→", `slug: ${context.MODULE_SLUG} → bucket ${context.MODULE_SLUG}, repos ${context.FRONTEND_REPO} / ${context.BACKEND_REPO}`);
+    }
 
     if (result.missing.length) {
       log("!", `package is missing ${result.missing.length} template file(s): ${result.missing.map((f) => f.path).join(", ")}`);
@@ -310,7 +779,11 @@ function printSummary(result, context, flow, written, quiet) {
   console.log("\n  Next");
   console.log("    1. Fill the {{PLACEHOLDER}} values listed above (grep for '{{').");
   console.log("    2. Read .docs/project-governance/README.md to learn the pipeline.");
-  console.log("    3. Open AGENTS.md — every AI agent reads it before touching this repository.\n");
+  console.log("    3. Open AGENTS.md — every AI agent reads it before touching this repository.");
+  if (context.SCAFFOLD && context.SCAFFOLD !== "docs") {
+    console.log("    4. Scaffolded repositories are raw: cd into each and run npm install / mvn verify.");
+  }
+  console.log("");
 }
 
 async function main() {
@@ -348,15 +821,40 @@ async function main() {
     log("○", `dry run — nothing written. ${result.governance.files ? Object.keys(result.governance.files).length : 0} documents would be rendered.`, quiet);
   }
 
+  heading("4. Governance");
   const written = {};
   const hashes = {};
+  /**
+   * Record the hash of a file this run produced — or of an existing file that
+   * is byte-identical to it.
+   *
+   * The second half matters more than it looks. A re-install overwrites
+   * `.docs/install.json`, so hashing only what this run wrote would erase the
+   * record of everything it *kept*; uninstall would then read every document as
+   * hand-edited and back up the whole tree instead of removing it. The hash is
+   * of the content as installed, which is what makes "was this edited
+   * afterwards?" answerable on any run, not just the first.
+   */
+  const recordHash = (target, content, status, key) => {
+    if (dryRun) return;
+    let matches = status === "written";
+    if (!matches) {
+      try {
+        matches = fs.readFileSync(target, "utf8") === content;
+      } catch (err) {
+        matches = false;
+      }
+    }
+    if (matches) hashes[key] = sha256(content);
+  };
+
   const agentsPath = path.join(report.cwd, skills.AGENTS_FILENAME);
   written.agents = writeFileSafe(
     agentsPath,
     result.agents.text,
     { force: Boolean(flags.force), dryRun, quiet }
   );
-  if (written.agents === "written") hashes[skills.AGENTS_FILENAME] = sha256(result.agents.text);
+  recordHash(agentsPath, result.agents.text, written.agents, skills.AGENTS_FILENAME);
 
   const docsRoot = path.join(report.cwd, skills.GOVERNANCE_DIR);
   for (const [relative, content] of Object.entries(result.governance.files)) {
@@ -366,11 +864,20 @@ async function main() {
       dryRun,
       quiet
     });
-    // The hash is of the content this run *produced*, which is what makes "was
-    // this document edited afterwards?" answerable at uninstall time. A file
-    // this run refused to overwrite gets no new hash, so an edited one is still
-    // recognised as edited later.
-    if (written[relative] === "written") hashes[relative] = sha256(content);
+    recordHash(target, content, written[relative], relative);
+  }
+
+  const scaffoldState = runScaffoldStep({ context, report, flags, dryRun, quiet });
+  const readmeState = await runReadmeStep({ context, report, flags, dryRun, quiet });
+  const minioState = await runMinioStep({ context, report, flags, dryRun, quiet });
+
+  // A scaffolded file that could not be named is a file that was not written,
+  // and its placeholder is a real hole in the repository, not a convention —
+  // so it joins the governance tree's list rather than getting its own warning.
+  if (scaffoldState.unresolvedTokens && scaffoldState.unresolvedTokens.length) {
+    result.unresolved = skills.reportableTokens(
+      [...new Set([...result.unresolved, ...scaffoldState.unresolvedTokens])].sort()
+    );
   }
 
   // A machine-readable record of the install, so `dreams-ai-skills-check` and a
@@ -390,7 +897,15 @@ async function main() {
           flow,
           context,
           answers: asked,
-          hashes
+          hashes,
+          readme: readmeState,
+          scaffold: {
+            parts: scaffoldState.parts || "docs",
+            repositories: scaffoldState.repositories || [],
+            hashes: scaffoldState.hashes || {},
+            unresolvedPaths: scaffoldState.unresolvedPaths || []
+          },
+          minio: minioState
         },
         null,
         2

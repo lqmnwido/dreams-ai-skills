@@ -52,8 +52,10 @@ to the user in one short block, then follow the matching flow.
 | Who is the host/remote? | `grep -n -A3 "name:" vue.config.js` | `name: "shell"` or another remote name |
 | Is there federation metadata? | `cat src/metadata.js` | `remoteName`, `routePrefix` |
 | Does it consume shared UI? | `grep -n "@2enapps/ui" package.json` | git branch vs `file:` link vs absent |
-| Is a governance tree already here? | `ls .docs/project-governance` | 30 documents or absent |
-| Is it a service? | `ls main.py app.py main.go server.js cmd internal 2>/dev/null` | server framework |
+| Is a governance tree already here? | `ls .docs/project-governance` | 33 documents or absent |
+| Is it a service? | `ls main.py app.py main.go server.js cmd internal pom.xml build.gradle 2>/dev/null` | server framework |
+| Is it a module workspace? | `ls -d *_fe *_be 2>/dev/null` | a `module-pair` produced by `--parts=both` |
+| Does it upload? | `grep -rn "MultipartFile\|multipart/form-data\|type=\"file\"\|new FormData("` | an upload feature, and whether it has a storage client |
 
 Then apply:
 
@@ -72,6 +74,9 @@ elif package.json name is "@2enapps/ui"
 
 elif a server framework is present and no Vue CLI entry point
     → EXISTING MODULE — backend API       (flow 1.3)
+
+elif a `*_fe` directory sits beside a `*_be` directory
+    → EXISTING MODULE — module workspace  (flow 1.3; kind `module-pair`)
 
 else
     → UNCLASSIFIED — ask the user. Do not guess.
@@ -96,6 +101,8 @@ Ask, in this order:
    - `remote-module` — feature views and feature services, exposed to the Shell
    - `shared-ui` — the `@2enapps/ui` presentation package
    - `backend-api` — the service the modules call
+   - `module-pair` — a new module made of both: `<slug>_fe` and `<slug>_be`,
+     created as siblings in this directory (`--parts` narrows it to one)
 3. **What is the module name?** The federation remote name, lowercase, no
    spaces. This string is a public contract: it is the left half of
    `<remote>/<expose-path>` that the Shell imports. A typo here is a runtime
@@ -115,9 +122,33 @@ Ask, in this order:
 11. **Where is the Shell repository?** Blank if this *is* the Shell.
 12. **How does it depend on `@2enapps/ui`?** The git branch, a `file:` link, or
     `n/a`.
+13. **Module slug** (a `module-pair` or `backend-api`). Lowercase, hyphenated —
+    `module-demo`. It names the object-storage bucket (`module-demo`), the two
+    repositories (`module_demo_fe` / `module_demo_be`), the Java package and the
+    API base (`/api/module-demo`). It is derived everywhere else; asking once
+    keeps the four of them from drifting apart.
+14. **Backend port** — this module's own service, not the Shell's `3000`.
 
 Then fill `.docs/project-governance/**` from the answers, replacing every
 `{{TOKEN}}` you can. Do not leave a token that you have an answer for.
+
+#### 1.2.1 After the governance tree, for a `module-pair`
+
+The installer does this; do it by hand only when the installer is unavailable,
+and in the same order:
+
+1. **README table.** The routes table (`<!-- routes:start -->`) goes in
+   `<slug>_fe/README.md`, the API table (`<!-- api:start -->`) in
+   `<slug>_be/README.md`. Generated from `vue.config.js` exposes and from the
+   Spring `@*Mapping` annotations — never from memory.
+2. **Scaffolding.** `<slug>_fe` and `<slug>_be` are written from the package's
+   templates. Existing files are kept; `--force` backs up before replacing.
+3. **Object storage.** Detect MinIO at `MINIO_ENDPOINT` (default
+   `http://localhost:9000`). If it is absent, **ask the user before installing
+   anything** — a non-interactive run prints the commands instead of acting —
+   then create the bucket named after the slug. The bucket name is not typed
+   twice: it comes from `--slug` or `--bucket` and the service reads the same
+   value from its own `.env`.
 
 ### 1.3 Flow B — EXISTING module
 
@@ -202,6 +233,8 @@ Read the document that answers your question. Nothing else.
 ### "How must the code look?"
 
 - `02-governance/STANDARDS.md` — naming, structure, language rules
+- `02-governance/ANTI-SLOP.md` — what this repository refuses to accept, and why
+- `05-development/FORMAT-LINT.md` — the formatters, the linters, the gate command
 - `04-design/UI-STANDARD.md` — presentation rules
 - `04-design/TEMPLATE.md` — copy-paste patterns for common cases
 
@@ -224,7 +257,13 @@ Read the document that answers your question. Nothing else.
 ### "What can I use?"
 
 - `05-development/TOOLS.md` — the approved stack
+- `05-development/FORMAT-LINT.md` — how the approved stack is enforced
 - `05-development/REPOSITORY-STANDARD.md` — required files, branches, commits
+
+### "How is the backend shaped / where do uploads go?"
+
+- `09-backend/SPRING-BOOT.md` — layers, object model, the Spring idioms in use
+- `09-backend/STORAGE.md` — MinIO, one bucket per module, the upload endpoints
 
 ### "How do I verify it?"
 
@@ -317,6 +356,7 @@ into "verified" when you only read the code.
 | 02 | [`STANDARDS.md`](.docs/project-governance/02-governance/STANDARDS.md) | How code must look |
 | 02 | [`GUARDRAILS.md`](.docs/project-governance/02-governance/GUARDRAILS.md) | What must never happen |
 | 02 | [`QUALITY.md`](.docs/project-governance/02-governance/QUALITY.md) | Definition of done |
+| 02 | [`ANTI-SLOP.md`](.docs/project-governance/02-governance/ANTI-SLOP.md) | What is refused, and why |
 | 02 | [`SECURITY.md`](.docs/project-governance/02-governance/SECURITY.md) | Security rules |
 | 03 | [`ARCHITECTURE.md`](.docs/project-governance/03-architecture/ARCHITECTURE.md) | Ecosystem rules |
 | 03 | [`API-CONTRACT.md`](.docs/project-governance/03-architecture/API-CONTRACT.md) | Frontend/backend boundary |
@@ -327,6 +367,7 @@ into "verified" when you only read the code.
 | 04 | [`UI-STANDARD.md`](.docs/project-governance/04-design/UI-STANDARD.md) | Presentation rules |
 | 04 | [`TEMPLATE.md`](.docs/project-governance/04-design/TEMPLATE.md) | Reusable patterns |
 | 05 | [`DEVELOPMENT.md`](.docs/project-governance/05-development/DEVELOPMENT.md) | How to build |
+| 05 | [`FORMAT-LINT.md`](.docs/project-governance/05-development/FORMAT-LINT.md) | Formatters, linters, the gate |
 | 05 | [`TOOLS.md`](.docs/project-governance/05-development/TOOLS.md) | Approved stack |
 | 05 | [`REPOSITORY-STANDARD.md`](.docs/project-governance/05-development/REPOSITORY-STANDARD.md) | Repository shape |
 | 06 | [`AUDIT.md`](.docs/project-governance/06-quality/AUDIT.md) | Pre-development state |
@@ -340,6 +381,8 @@ into "verified" when you only read the code.
 | 08 | [`MONITORING.md`](.docs/project-governance/08-operations/MONITORING.md) | What is watched |
 | 08 | [`INCIDENT.md`](.docs/project-governance/08-operations/INCIDENT.md) | Incident response |
 | 08 | [`RUNBOOK.md`](.docs/project-governance/08-operations/RUNBOOK.md) | Operational procedures |
+| 09 | [`SPRING-BOOT.md`](.docs/project-governance/09-backend/SPRING-BOOT.md) | Backend layering and Spring |
+| 09 | [`STORAGE.md`](.docs/project-governance/09-backend/STORAGE.md) | MinIO and uploads |
 
 ---
 

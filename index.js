@@ -34,6 +34,11 @@ const detectLib = require("./lib/detect");
 const renderLib = require("./lib/render");
 const questionsLib = require("./lib/questions");
 const promptLib = require("./lib/prompt");
+const namingLib = require("./lib/naming");
+const scaffoldLib = require("./lib/scaffold");
+const readmeLib = require("./lib/readme");
+const minioLib = require("./lib/minio");
+const featuresLib = require("./lib/features");
 
 const VERSION = require("./package.json").version;
 
@@ -69,6 +74,25 @@ function collectAgentsTemplate() {
   return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
 }
 
+/**
+ * The raw material of a new repository: every scaffold template keyed by its
+ * path *before* `__SUB__` expansion. Pass `"fe"` or `"be"` for one half; pass
+ * nothing for both, prefixed. Exposed so a caller can inspect what a
+ * `module-pair` would produce without producing it.
+ */
+function collectScaffoldTemplates(half = null) {
+  const fe = collectTemplates(path.join("scaffold", "fe"));
+  const be = collectTemplates(path.join("scaffold", "be"));
+
+  if (half === "fe") return fe;
+  if (half === "be") return be;
+
+  const all = {};
+  for (const [key, value] of Object.entries(fe)) all[`fe/${key}`] = value;
+  for (const [key, value] of Object.entries(be)) all[`be/${key}`] = value;
+  return all;
+}
+
 /** The manifest the checker and the README both read. */
 function manifest() {
   const files = [];
@@ -102,6 +126,9 @@ module.exports = {
   PIPELINE: paths.PIPELINE,
   MODULE_KINDS: paths.MODULE_KINDS,
   SCOPE_KINDS: paths.SCOPE_KINDS,
+  SCAFFOLD_KINDS: paths.SCAFFOLD_KINDS,
+  README_BLOCKS: paths.README_BLOCKS,
+  MODULE_ENV_PREFIX: paths.MODULE_ENV_PREFIX,
 
   detect: detectLib.detect,
   render: renderLib.render,
@@ -114,9 +141,16 @@ module.exports = {
   createPrompter: promptLib.createPrompter,
   UNANSWERED: promptLib.UNANSWERED,
 
+  naming: namingLib,
+  scaffold: scaffoldLib,
+  readme: readmeLib,
+  minio: minioLib,
+  features: featuresLib,
+
   collectTemplates,
   collectGovernanceTemplates,
   collectAgentsTemplate,
+  collectScaffoldTemplates,
   manifest,
   destinationFor,
   allGovernanceFiles: paths.allGovernanceFiles

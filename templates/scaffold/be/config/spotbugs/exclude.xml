@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs exclusions for {{MODULE_SLUG}}.
+
+  Empty on purpose. An exclusion list that starts full is a list nobody ever
+  shortens, and every entry in it is a bug class the team agreed to stop seeing.
+  Add an entry only with a comment naming the finding, why it is safe *here*,
+  and the date — and expect it to be removed when the reason goes away.
+-->
+<FindBugsFilter>
+</FindBugsFilter>

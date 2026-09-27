@@ -1,0 +1,5 @@
+# Spring Boot's SPI file. `SpringApplication` loads EnvironmentPostProcessor
+# implementations through `SpringFactoriesLoader`, so this line — and only this
+# line — is what makes the repository's `.env` readable by the service.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+{{BASE_PACKAGE}}.config.DotEnvEnvironmentPostProcessor

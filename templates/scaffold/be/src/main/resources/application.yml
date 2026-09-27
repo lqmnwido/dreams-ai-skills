@@ -1,0 +1,45 @@
+# {{MODULE_DISPLAY}} — service configuration.
+#
+# Every value below is read from this module's own environment (`.env`, loaded
+# by DotEnvEnvironmentPostProcessor) or from a real process environment variable.
+# Nothing is inherited from the Shell: they are separate processes on separate
+# machines, and a shared configuration file would make one module's change
+# another module's outage.
+
+server:
+  port: ${SERVER_PORT:{{BACKEND_PORT}}}
+  shutdown: graceful
+
+spring:
+  application:
+    name: {{BACKEND_REPO}}
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  servlet:
+    multipart:
+      max-file-size: ${MAX_FILE_SIZE:25MB}
+      max-request-size: ${MAX_REQUEST_SIZE:26MB}
+
+# Object storage. `bucket` must be this module's own bucket: writing to a shared
+# one would make one module's documents readable by another.
+storage:
+  endpoint: ${MINIO_ENDPOINT:{{MINIO_ENDPOINT}}}
+  access-key: ${MINIO_ROOT_USER:minioadmin}
+  secret-key: ${MINIO_ROOT_PASSWORD:minioadmin}
+  bucket: ${MINIO_BUCKET:{{BUCKET}}}
+  region: ${MINIO_REGION:us-east-1}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:{{BACKEND_REPO}}}]"
+  level:
+    root: INFO

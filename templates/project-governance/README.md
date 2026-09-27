@@ -44,6 +44,7 @@ project-governance/
 │   ├── STANDARDS.md          how code must look
 │   ├── GUARDRAILS.md         what must never happen
 │   ├── QUALITY.md            what "done" means
+│   ├── ANTI-SLOP.md          what this repository refuses to accept
 │   └── SECURITY.md           the security rules and their rationale
 │
 ├── 03-architecture/          STRUCTURE — how the pieces fit
@@ -60,6 +61,7 @@ project-governance/
 │
 ├── 05-development/           CRAFT — how the code gets written
 │   ├── DEVELOPMENT.md        the build loop
+│   ├── FORMAT-LINT.md        formatters, linters, and the gate command
 │   ├── TOOLS.md              the approved stack, and what is not
 │   └── REPOSITORY-STANDARD.md required files, branches, commits
 │
@@ -75,10 +77,14 @@ project-governance/
 │   ├── SYNC.md               cross-repository compatibility
 │   └── RELEASE.md            the release procedure
 │
-└── 08-operations/            SUSTAIN — how it stays healthy
-    ├── MONITORING.md         what is watched, and the alert thresholds
-    ├── INCIDENT.md           incident roles and procedure
-    └── RUNBOOK.md            operational procedures and decision trees
+├── 08-operations/            SUSTAIN — how it stays healthy
+│   ├── MONITORING.md         what is watched, and the alert thresholds
+│   ├── INCIDENT.md           incident roles and procedure
+│   └── RUNBOOK.md            operational procedures and decision trees
+│
+└── 09-backend/               SERVICE — the module's own API (backend installs)
+    ├── SPRING-BOOT.md        layering, object model, Spring idioms
+    └── STORAGE.md            object storage: MinIO, one bucket per module
 ```
 
 ---
@@ -211,6 +217,7 @@ repository: `{{REMOTE_PORT}}`.
 | `06-quality/` | {{OWNER}} | — |
 | `07-delivery/` | {{OWNER}} | the Shell owner, for `SYNC.md` |
 | `08-operations/` | {{OWNER}} | whoever is on call |
+| `09-backend/` | {{OWNER}} | — |
 
 ---
 

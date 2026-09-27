@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Checkstyle for {{MODULE_SLUG}}.
+
+  Deliberately a short list. Every rule here is one an AI agent or a rushed
+  reviewer reliably gets wrong, and every rule that is not on the list would be
+  a matter of taste enforced as a build failure. Structure beats opinion.
+
+  Formatting is NOT checked here — Spotless owns it. Two tools claiming the same
+  territory is how a build becomes unfixable.
+-->
+<module name="Checker">
+  <property name="charset" value="UTF-8"/>
+  <property name="severity" value="error"/>
+  <property name="fileExtensions" value="java"/>
+
+  <module name="FileTabCharacter">
+    <property name="eachLine" value="true"/>
+  </module>
+
+  <module name="LineLength">
+    <property name="max" value="140"/>
+    <property name="ignorePattern" value="^package|^import|https?://|^\s*\*"/>
+  </module>
+
+  <module name="TreeWalker">
+    <!-- Dead code and imports: the two things that survive a copy-paste. -->
+    <module name="UnusedImports"/>
+    <module name="RedundantImport"/>
+    <module name="AvoidStarImport"/>
+
+    <!-- Structure a reviewer should never have to ask about. -->
+    <module name="NeedBraces"/>
+    <module name="EmptyBlock">
+      <property name="option" value="TEXT"/>
+      <property name="tokens" value="LITERAL_TRY,LITERAL_CATCH,LITERAL_FINALLY,LITERAL_IF,LITERAL_ELSE"/>
+    </module>
+    <module name="EqualsHashCode"/>
+    <module name="SimplifyBooleanExpression"/>
+    <module name="SimplifyBooleanReturn"/>
+    <module name="StringLiteralEquality"/>
+    <module name="FallThrough"/>
+    <module name="MissingSwitchDefault"/>
+
+    <!-- A method that declares `throws Exception` has declared nothing. -->
+    <module name="IllegalCatch">
+      <property name="illegalClassNames" value="java.lang.Throwable,java.lang.Error,java.lang.RuntimeException"/>
+    </module>
+    <module name="IllegalThrows">
+      <property name="illegalClassNames" value="java.lang.Throwable,java.lang.Exception"/>
+    </module>
+
+    <!-- Modifier order is a readability rule nobody argues about. -->
+    <module name="ModifierOrder"/>
+    <module name="UpperEll"/>
+  </module>
+</module>

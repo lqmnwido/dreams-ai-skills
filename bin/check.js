@@ -14,6 +14,7 @@
  */
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const skills = require("../index.js");
@@ -129,9 +130,19 @@ function run({ quiet = false, self = false } = {}) {
       );
     }
     if (state.detection && state.detection.kind && detection.kind && state.detection.kind !== detection.kind) {
-      warnings.push(
-        `the repository classified as "${detection.kind}" now, but the install recorded "${state.detection.kind}" — re-run the installer if the repository's role changed`
-      );
+      // A `module-pair` install records `new` — nothing existed when the intake
+      // ran — and the directories it then created are what classifies it now.
+      // Reporting that as drift would tell every freshly scaffolded workspace
+      // to re-run an installer that did exactly what was asked of it.
+      const scaffoldedPair =
+        state.detection.kind === "new" && detection.kind === "module-pair" && state.context && state.context.MODULE_KIND === "module-pair";
+      const collapsedPair =
+        detection.kind === "new" && state.detection.kind === "module-pair";
+      if (!scaffoldedPair && !collapsedPair) {
+        warnings.push(
+          `the repository classified as "${detection.kind}" now, but the install recorded "${state.detection.kind}" — re-run the installer if the repository's role changed`
+        );
+      }
     }
     if (!problems.length) log("✓", "documented identity matches the repository");
   }
@@ -166,8 +177,296 @@ function run({ quiet = false, self = false } = {}) {
     }
   }
 
+  /* 6. Generated README tables -------------------------------------- */
+
+  checkReadmeBlocks({ root, state, log, problems, warnings });
+
+  /* 7. Uploads and object storage ----------------------------------- */
+
+  checkStorage({ root, state, log, problems, warnings });
+
+  /* 8. The module's own environment --------------------------------- */
+
+  checkEnvironment({ root, state, log, problems, warnings });
+
   report(problems, warnings, quiet);
   process.exitCode = problems.length ? 1 : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* 6. README tables                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A module's README carries generated tables between markers. They are the
+ * only documentation anyone reads before calling an endpoint, so a table that
+ * drifted from the code is worse than no table — it is believed.
+ *
+ * Both failure shapes are reported: markers that no longer pair (someone
+ * deleted half a block), and a block whose content no longer matches what the
+ * code says right now. The second is a warning, because it is normally fixed by
+ * re-running the installer rather than by stopping work.
+ */
+function checkReadmeBlocks({ root, state, log, problems, warnings }) {
+  const readmeName = skills.readme.README_NAME;
+  const ctx = (state && state.context) || {};
+
+  const directories = [root];
+  const seen = new Set([root]);
+  const recorded = (state && state.scaffold && state.scaffold.repositories) || [];
+
+  for (const repository of recorded) {
+    const dir = path.join(root, repository);
+    if (fs.existsSync(dir) && !seen.has(dir)) {
+      seen.add(dir);
+      directories.push(dir);
+    }
+  }
+  // An install that predates the scaffold record still produced `*_fe` and
+  // `*_be` directories; scanning them keeps the check useful on older trees.
+  for (const entry of safeReaddir(root)) {
+    if (!/(_fe|_be)$/.test(entry)) continue;
+    const dir = path.join(root, entry);
+    if (isDirectory(dir) && !seen.has(dir)) {
+      seen.add(dir);
+      directories.push(dir);
+    }
+  }
+
+  let blocks = 0;
+
+  for (const dir of directories) {
+    const file = path.join(dir, readmeName);
+    if (!fs.existsSync(file)) continue;
+    const content = fs.readFileSync(file, "utf8");
+
+    for (const mode of Object.keys(skills.README_BLOCKS)) {
+      const block = skills.README_BLOCKS[mode];
+      const starts = content.includes(block.start);
+      const ends = content.includes(block.end);
+      if (!starts && !ends) continue;
+
+      const relative = path.relative(root, file) || readmeName;
+      blocks += 1;
+
+      if (!starts || !ends || !skills.readme.blockRange(content, mode)) {
+        problems.push(
+          `${relative}: the ${mode} markers do not pair — ` +
+            (starts ? `no \`${block.end}\`` : `no \`${block.start}\``) +
+            `. The generated table cannot be refreshed or removed until they balance.`
+        );
+        continue;
+      }
+
+      const range = skills.readme.blockRange(content, mode);
+      const current = content.slice(range.start, range.end);
+      const expected = skills.readme.render(mode, rowsForCheck(mode, dir, ctx));
+      if (current !== expected) {
+        warnings.push(
+          `${relative}: the ${mode} table no longer matches what the repository declares — ` +
+            `re-run the installer to regenerate it`
+        );
+      }
+    }
+  }
+
+  const recordedReadme = (state && state.readme) || {};
+  const expectedBlocks = Object.entries(recordedReadme).filter(
+    ([, entry]) => entry && entry.action && entry.action !== "dry"
+  );
+  if (expectedBlocks.length && blocks === 0) {
+    problems.push(
+      `every generated README table is gone (the install recorded: ${expectedBlocks
+        .map(([mode]) => mode)
+        .join(", ")}) — re-run the installer, or uninstall and reinstall`
+    );
+  }
+
+  if (blocks) log("✓", `${blocks} generated README table(s) present and paired`);
+}
+
+function rowsForCheck(mode, dir, ctx) {
+  const detected = mode === "api" ? skills.readme.detectApis(dir) : skills.readme.detectRoutes(dir);
+  if (detected.length) return detected;
+  return mode === "api" ? skills.readme.derivedApis(ctx) : skills.readme.derivedRoutes(ctx);
+}
+
+/* ------------------------------------------------------------------ */
+/* 7. Uploads and object storage                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "Does this repository upload documents, and where do the files go?" is a
+ * question neither the governance tree nor a human reliably answers after the
+ * third commit. The signals are reported with addresses so the answer can be
+ * checked rather than recalled.
+ */
+function checkStorage({ root, state, log, problems, warnings }) {
+  const features = skills.features.detectUploads(root);
+  const ctx = (state && state.context) || {};
+
+  if (!features.detected) {
+    log("·", "no upload or object-storage code found");
+  } else {
+    const shown = features.signals.slice(0, 4);
+    const suffix = features.signals.length > shown.length ? ` (+${features.signals.length - shown.length} more)` : "";
+    log("✓", `upload/storage evidence: ${features.signals.length} signal(s)${suffix}`);
+    for (const signal of shown) {
+      log(" ", `${signal.id} — ${signal.file}:${signal.lines.join(",")}`);
+    }
+    if (features.truncated) warnings.push("the storage scan hit its file limit; the list above is partial");
+  }
+
+  const backendUpload = features.signals.some((s) => s.kind === "backend");
+  const frontendUpload = features.signals.some((s) => s.kind === "frontend");
+
+  if (backendUpload && !features.hasStorage) {
+    warnings.push(
+      `a backend upload endpoint exists but no object-storage client was found — ` +
+        `${features.signals.filter((s) => s.kind === "backend").map((s) => s.file).join(", ")} receive bytes from somewhere; ` +
+        `say where in 09-backend/STORAGE.md`
+    );
+  }
+
+  if (frontendUpload && !backendUpload && !features.hasStorage) {
+    log("·", "uploads are driven from the frontend; the receiving service lives outside this tree");
+  }
+
+  if (features.hasStorage && !backendUpload && !frontendUpload) {
+    warnings.push("an object-storage client is configured but no upload path uses it — a dead dependency");
+  }
+
+  const documented = (ctx.BUCKET || "").trim();
+  if (features.buckets.length) {
+    log("·", `bucket(s) in configuration: ${features.buckets.join(", ")}`);
+    if (documented) {
+      const foreign = features.buckets.filter((bucket) => bucket !== documented);
+      if (foreign.length) {
+        warnings.push(
+          `bucket drift: this module documents "${documented}" but the repository also names ` +
+            `${foreign.map((b) => `"${b}"`).join(", ")} — one of them belongs to another module`
+        );
+      }
+    }
+  } else if (documented && features.hasStorage) {
+    warnings.push(
+      `object storage is used but no bucket is configured — ${documented} is the documented one; ` +
+        `set MINIO_BUCKET in the service's own .env`
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 8. The module's own environment                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The rule the platform depends on: every module reads its own `.env`, and
+ * nothing in it is committed. Three things break that — a `.env` that was never
+ * created from the example, a value that drifted from the documented one, and
+ * a `.env` a `.gitignore` no longer ignores.
+ */
+function checkEnvironment({ root, state, log, problems, warnings }) {
+  const ctx = (state && state.context) || {};
+
+  const directories = [root];
+  for (const entry of safeReaddir(root)) {
+    if (!/(_fe|_be)$/.test(entry) && !fs.existsSync(path.join(root, entry, "vue.config.js"))) continue;
+    const dir = path.join(root, entry);
+    if (isDirectory(dir)) directories.push(dir);
+  }
+
+  let inspected = 0;
+
+  for (const dir of directories) {
+    const envFile = path.join(dir, ".env");
+    const exampleFile = path.join(dir, ".env.example");
+    const relative = path.relative(root, dir) || ".";
+
+    if (!fs.existsSync(envFile) && fs.existsSync(exampleFile)) {
+      warnings.push(
+        `${relative}/.env.example exists but ${relative}/.env does not — ` +
+          `copy it across before starting the service`
+      );
+    }
+
+    if (!fs.existsSync(envFile)) continue;
+    inspected += 1;
+
+    const values = parseEnv(fs.readFileSync(envFile, "utf8"));
+
+    // A `.env` tracked by git is a secret in the history, and no rotation later
+    // removes it from every commit that already has it.
+    const gitignore = path.join(dir, ".gitignore");
+    if (fs.existsSync(gitignore)) {
+      const ignored = fs.readFileSync(gitignore, "utf8").split("\n").map((l) => l.trim());
+      if (!ignored.some((line) => line === ".env" || line === "/.env")) {
+        warnings.push(`${relative}/.gitignore does not ignore .env — it will be committed`);
+      }
+    } else {
+      warnings.push(`${relative} has no .gitignore`);
+    }
+
+    const isBackend = fs.existsSync(path.join(dir, "pom.xml")) || fs.existsSync(path.join(dir, "build.gradle"));
+    const isFrontend = fs.existsSync(path.join(dir, "vue.config.js"));
+    if (isBackend) {
+      if (!("MINIO_BUCKET" in values)) {
+        warnings.push(
+          `${relative}/.env sets no MINIO_BUCKET — the service falls back to a default; ` +
+            `set it to the module bucket${ctx.BUCKET ? ` "${ctx.BUCKET}"` : ""}`
+        );
+      } else if (ctx.BUCKET && values.MINIO_BUCKET !== ctx.BUCKET) {
+        problems.push(
+          `${relative}/.env writes to bucket "${values.MINIO_BUCKET}" but this module documents ` +
+            `"${ctx.BUCKET}" — uploads would land in a bucket nobody owns`
+        );
+      }
+      if (!("MINIO_ENDPOINT" in values)) {
+        warnings.push(`${relative}/.env sets no MINIO_ENDPOINT; the default is http://localhost:9000`);
+      }
+      if (!fs.existsSync(path.join(dir, ".env.example"))) {
+        warnings.push(`${relative} has no .env.example — the next machine has no template`);
+      }
+    }
+
+    if (ctx.API_BASE_ENV && isFrontend && !(ctx.API_BASE_ENV in values) && fs.existsSync(exampleFile)) {
+      const exampleValues = parseEnv(fs.readFileSync(exampleFile, "utf8"));
+      if (!(ctx.API_BASE_ENV in exampleValues)) {
+        warnings.push(
+          `${relative}/.env does not declare ${ctx.API_BASE_ENV}, the base this module documents — ` +
+            `its API calls would fall back to whatever the Shell exports`
+        );
+      }
+    }
+  }
+
+  if (inspected) log("✓", `${inspected} module .env file(s) inspected`);
+}
+
+function parseEnv(source) {
+  const values = {};
+  for (const line of String(source).split("\n")) {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue;
+    values[match[1]] = match[2].replace(/^["']|["']$/g, "").trim();
+  }
+  return values;
+}
+
+function safeReaddir(dir) {
+  try {
+    return fs.readdirSync(dir);
+  } catch (err) {
+    return [];
+  }
+}
+
+function isDirectory(target) {
+  try {
+    return fs.statSync(target).isDirectory();
+  } catch (err) {
+    return false;
+  }
 }
 
 /** `--self` validates the package itself, so `npm test` is meaningful. */
@@ -210,8 +509,226 @@ function selfCheck(log) {
   }
   log("✓", "renderer substitutes and preserves correctly");
 
+  checkScaffoldTemplates(problems, log);
+  checkReadmeRendering(problems, log);
+  checkMinioSurface(problems, log);
+
   report(problems, [], false);
   process.exitCode = problems.length ? 1 : 0;
+}
+
+/**
+ * A full `module-pair` context, standing in for an intake nobody performs here.
+ * Everything below is checked against *this* exact shape, so a change that
+ * breaks the scaffold breaks `npm test` rather than a user's directory.
+ */
+function syntheticContext() {
+  const detected = {
+    kind: "new",
+    isNew: true,
+    cwd: process.cwd(),
+    federation: { name: "" },
+    metadata: {},
+    ui: {},
+    env: {},
+    package: {},
+    backend: {},
+    hasDocs: false
+  };
+
+  return skills.buildContext(detected, {
+    flags: {},
+    detected,
+    SCOPE_KIND: "new-feature",
+    MODULE_KIND: "module-pair",
+    MODULE_NAME: "module-demo",
+    MODULE_DISPLAY: "Module Demo",
+    MODULE_SLUG: "module-demo",
+    SCAFFOLD: "both",
+    SUBMODULES: "program/senarai-program,program/maklumat-program",
+    USE_CASE: "A demo module.",
+    ROUTE_PREFIX: "/module-demo",
+    ROLE_KEY: "adminModuleDemo",
+    REMOTE_PORT: "3002",
+    BACKEND_PORT: "8081",
+    API_BASES: "http://localhost:8081/api",
+    UI_DEPENDENCY: "n/a",
+    SHELL_REPO: "../shell",
+    REPO_NAME: "module-demo",
+    OWNER: "platform",
+    DEPLOY_TARGET: "container",
+    BLAST_RADIUS: "shell"
+  });
+}
+
+/** The scaffold must expand completely, or a fresh repository starts broken. */
+function checkScaffoldTemplates(problems, log) {
+  const fe = skills.collectScaffoldTemplates("fe");
+  const be = skills.collectScaffoldTemplates("be");
+  const missing = [];
+  if (!Object.keys(fe).length) missing.push("templates/scaffold/fe");
+  if (!Object.keys(be).length) missing.push("templates/scaffold/be");
+
+  if (missing.length) {
+    problems.push(`scaffold templates missing: ${missing.join(", ")}`);
+    return;
+  }
+
+  // Two names never reach a published package: npm refuses to write `.gitignore`
+  // into a tarball, and a `.env` beside the generated repository's own
+  // `.gitignore` is ignored by it. Locally both files are simply on disk, so the
+  // mistake survives every test that reads this directory — it surfaces on the
+  // first install from `npx`, where the file is gone.
+  const UNSHIPPABLE = [".gitignore", ".npmignore", ".npmrc", ".env"];
+  const refused = Object.entries({ "fe/": fe, "be/": be }).flatMap(([prefix, entries]) =>
+    Object.keys(entries)
+      .filter((key) => UNSHIPPABLE.includes(key.split("/").pop()))
+      .map((key) => prefix + key)
+  );
+  if (refused.length) {
+    problems.push(
+      `scaffold template(s) that will not be published: ${refused.join(", ")} — ` +
+        `rename them and add the mapping to PATH_RENAMES in lib/scaffold.js`
+    );
+  }
+
+  const context = syntheticContext();
+  let plan;
+  try {
+    plan = skills.scaffold.plan(context);
+  } catch (err) {
+    problems.push(`scaffold plan threw: ${err.message}`);
+    return;
+  }
+
+  if (!plan.files.length) {
+    problems.push("scaffold plan produced no files");
+    return;
+  }
+  if (plan.unresolvedPaths.length) {
+    problems.push(`scaffold paths did not resolve: ${plan.unresolvedPaths.join(", ")}`);
+  }
+  if (plan.unresolvedTokens.length) {
+    problems.push(`scaffold tokens did not resolve: ${plan.unresolvedTokens.map((t) => `{{${t}}}`).join(", ")}`);
+  }
+
+  const leftovers = new Set();
+  for (const file of plan.files) {
+    for (const token of skills.reportableTokens(skills.collectTokens(file.content))) leftovers.add(token);
+  }
+  if (leftovers.size) {
+    problems.push(
+      `scaffold files still contain placeholders: ${[...leftovers].map((t) => `{{${t}}}`).join(", ")}`
+    );
+  }
+
+  const expected = {
+    fe: plan.files.filter((f) => f.relative.startsWith(`${context.FRONTEND_REPO}/`)).length,
+    be: plan.files.filter((f) => f.relative.startsWith(`${context.BACKEND_REPO}/`)).length
+  };
+  if (expected.fe < 10) problems.push(`frontend scaffold is only ${expected.fe} files`);
+  if (expected.be < 20) problems.push(`backend scaffold is only ${expected.be} files`);
+
+  // ...and the renamed templates must come out under the names a repository
+  // needs, or the mapping has silently stopped applying.
+  const produced = new Set(plan.files.map((f) => f.relative));
+  const wantedNames = [
+    `${context.FRONTEND_REPO}/.gitignore`,
+    `${context.BACKEND_REPO}/.gitignore`,
+    `${context.BACKEND_REPO}/.env`
+  ];
+  const absent = wantedNames.filter((relative) => !produced.has(relative));
+  if (absent.length) {
+    problems.push(`scaffold does not produce: ${absent.join(", ")}`);
+  }
+
+  log("✓", `scaffold expands cleanly: ${plan.files.length} files (${expected.fe} fe / ${expected.be} be)`);
+
+  checkGeneratedEndpoints(plan, context, problems, log);
+}
+
+/**
+ * The README's API table is generated by reading the Spring annotations. If the
+ * annotations the scaffold writes cannot be read back by the reader that writes
+ * the table, every freshly scaffolded README is wrong on its first run — and
+ * wrong documentation nobody doubted is the expensive kind.
+ */
+function checkGeneratedEndpoints(plan, context, problems, log) {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "dreams-scaffold-"));
+  try {
+    for (const file of plan.files) {
+      const target = path.join(temp, file.relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file.content, "utf8");
+    }
+
+    const backend = path.join(temp, context.BACKEND_REPO);
+    const rows = skills.readme.detectApis(backend);
+    const wanted = [
+      "POST /api/module-demo/documents",
+      "GET /api/module-demo/documents/{key}",
+      "DELETE /api/module-demo/documents/{key}"
+    ];
+    const found = rows.map((row) => `${row.method} ${row.endpoint}`);
+    const absent = wanted.filter((endpoint) => !found.includes(endpoint));
+    if (absent.length) {
+      problems.push(
+        `detectApis does not read back the scaffolded controller: missing ${absent.join(", ")} ` +
+          `(it read ${found.length ? found.join(", ") : "nothing"})`
+      );
+    } else {
+      log("✓", `detectApis reads the generated controller back (${rows.length} endpoint(s))`);
+    }
+
+    const frontend = path.join(temp, context.FRONTEND_REPO);
+    const routes = skills.readme.detectRoutes(frontend);
+    if (routes.length < 2) {
+      problems.push(`detectRoutes found ${routes.length} route(s) in the scaffolded frontend`);
+    } else {
+      log("✓", `detectRoutes reads the generated exposes back (${routes.length} route(s))`);
+    }
+  } catch (err) {
+    problems.push(`scaffold round-trip failed: ${err.message}`);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+/** The marker blocks must pair inside the markdown they are written into. */
+function checkReadmeRendering(problems, log) {
+  const context = syntheticContext();
+  for (const mode of Object.keys(skills.README_BLOCKS)) {
+    const rows =
+      mode === "api" ? skills.readme.derivedApis(context) : skills.readme.derivedRoutes(context);
+    if (!rows.length) {
+      problems.push(`derived ${mode} rows are empty`);
+      continue;
+    }
+    const block = skills.readme.render(mode, rows);
+    if (!skills.readme.blockRange(block, mode)) {
+      problems.push(`${mode} rendering does not produce a paired marker block`);
+    }
+    if (!block.includes(context.MODULE_SLUG)) {
+      problems.push(`${mode} rendering does not mention the module slug`);
+    }
+  }
+  log("✓", "README marker blocks render paired and named");
+}
+
+/** Object storage help must name this module's bucket, or it is generic advice. */
+function checkMinioSurface(problems, log) {
+  const context = syntheticContext();
+  const text = skills.minio.instructions(context.BUCKET, {});
+  if (!text.includes(context.BUCKET)) {
+    problems.push("minio.instructions does not mention the module bucket");
+  }
+  if (!/MC_HOST|mc mb/.test(text)) {
+    problems.push("minio.instructions does not show how to create the bucket with minio/mc");
+  }
+  if (!text.includes(skills.minio.DEFAULT_ENDPOINT)) {
+    problems.push("minio.instructions does not name the local endpoint");
+  }
+  log("✓", `MinIO instructions are module-specific (bucket ${context.BUCKET})`);
 }
 
 function report(problems, warnings, quiet) {

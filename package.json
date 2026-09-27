@@ -1,6 +1,6 @@
 {
   "name": "@lqmnwido/dreams-ai-skills",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Per-repository AI governance skills for the D-ReAMS micro-frontend platform. npx it into a Shell, a frontend module, the shared UI package, or a backend API to generate AGENTS.md and .docs/project-governance/**.",
   "main": "index.js",
   "bin": {

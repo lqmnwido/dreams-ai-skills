@@ -15,6 +15,9 @@
  *     deleted;
  *   - a root `AGENTS.md` is only removed when it carries this package's marker.
  *     A file the user wrote themselves is left completely alone.
+ *   - a generated README table is removed and the README around it is kept;
+ *   - a scaffolded file is removed only while its sha256 still matches what
+ *     the scaffold wrote. Anything a developer has since implemented stays.
  */
 
 const crypto = require("crypto");
@@ -93,21 +96,23 @@ function run({ quiet = false, purge = false } = {}) {
   const removed = [];
   const backedUp = [];
 
+  const statePath = path.join(docsRoot, "install.json");
+  let state = null;
+  if (fs.existsSync(statePath)) {
+    try {
+      state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    } catch (err) {
+      console.log(`  ! .docs/install.json is not valid JSON (${err.message}) — every document is treated as hand-edited`);
+    }
+  } else {
+    console.log("  ! no .docs/install.json — every document is treated as hand-edited");
+  }
+
   /* 1. Governance documents ------------------------------------------ */
 
   if (fs.existsSync(governanceRoot)) {
     const backupDir = path.join(docsRoot, ".removed");
-    const statePath = path.join(docsRoot, "install.json");
-    let hashes = {};
-    if (fs.existsSync(statePath)) {
-      try {
-        hashes = JSON.parse(fs.readFileSync(statePath, "utf8")).hashes || {};
-      } catch (err) {
-        console.log(`  ! .docs/install.json is not valid JSON (${err.message}) — every document is treated as hand-edited`);
-      }
-    } else {
-      console.log("  ! no .docs/install.json — every document is treated as hand-edited");
-    }
+    const hashes = (state && state.hashes) || {};
 
     for (const rel of Object.keys(templates)) {
       const file = path.join(governanceRoot, rel);
@@ -136,6 +141,14 @@ function run({ quiet = false, purge = false } = {}) {
     }
 
     /* 3. Empty-tree cleanup ------------------------------------------ */
+
+    // Nine empty section folders left behind make a repository look half-
+    // uninstalled, and nothing else ever comes back to clear them. `.removed`
+    // sits outside the governance tree, so the work it holds is untouched.
+    if (pruneEmpty(governanceRoot)) {
+      fs.rmdirSync(governanceRoot);
+      log("✓", `removed empty ${skills.GOVERNANCE_DIR}`);
+    }
 
     // `.removed` holds hand-edited documents from an earlier run. It is the only
     // place that work survives, so it is never deleted implicitly.
@@ -174,9 +187,130 @@ function run({ quiet = false, purge = false } = {}) {
     log("–", `no ${skills.AGENTS_FILENAME} found`);
   }
 
+  /* 5. Scaffolded repositories --------------------------------------- */
+
+  const scaffoldRemoved = removeScaffold({ cwd, state, log, doPurge });
+
+  /* 6. Generated README tables --------------------------------------- */
+
+  const readmeRemoved = removeReadmeBlocks({ cwd, state, log });
+
   console.log(
-    `\n  ${removed.length} generated file(s) removed, ${backedUp.length} hand-edited file(s) preserved.\n`
+    `\n  ${removed.length} generated file(s) removed, ${backedUp.length} hand-edited file(s) preserved, ` +
+      `${readmeRemoved} README table(s) cleared, ${scaffoldRemoved.kept} scaffolded file(s) kept as edited.\n`
   );
+}
+
+/**
+ * The generated table goes; the README around it stays.
+ *
+ * This runs *after* the scaffold pass on purpose: a scaffolded README that is
+ * still byte-identical to what we wrote has already been deleted there, and
+ * one a developer has kept has lost nothing but our table. `--purge` does not
+ * change this — the table is ours and the prose is not.
+ */
+function removeReadmeBlocks({ cwd, state, log }) {
+  const entries = Object.entries((state && state.readme) || {}).filter(
+    ([, entry]) => entry && entry.action && entry.action !== "dry"
+  );
+  if (!entries.length) {
+    log("–", "no generated README tables recorded");
+    return 0;
+  }
+
+  let cleared = 0;
+  for (const [mode, entry] of entries) {
+    const dir = entry.path ? path.resolve(cwd, path.dirname(entry.path)) : cwd;
+    if (!skills.readme.hasBlock(dir, mode)) {
+      // The usual reason is that the scaffold pass already deleted the file it
+      // lived in, because it had not been touched since we wrote it. Saying
+      // "already absent" there would read as a table somebody else removed.
+      const file = path.join(dir, skills.readme.README_NAME);
+      log(
+        "–",
+        !fs.existsSync(file) && entry.path
+          ? `${entry.path} removed with the scaffolded repository`
+          : `${mode} table already absent`
+      );
+      continue;
+    }
+    const outcome = skills.readme.removeBlock(dir, mode, { created: Boolean(entry.created) });
+    if (outcome.action === "removed-file") {
+      log("✓", `removed ${entry.path} — this package created it`);
+    } else if (outcome.action === "removed-block") {
+      log("✓", `removed the ${mode} table from ${entry.path}`);
+    } else {
+      continue;
+    }
+    cleared += 1;
+  }
+  return cleared;
+}
+
+/**
+ * Scaffolded source is deleted only while it is byte-for-byte what we wrote.
+ *
+ * The sha256 recorded at install time is the only honest test: a scaffolded
+ * file that a developer has since implemented is their work, and a backup of it
+ * somewhere is not the same as it still being in the tree. So edited files stay
+ * where they are and are reported, and directories are pruned only once they
+ * are genuinely empty.
+ */
+function removeScaffold({ cwd, state, log, doPurge }) {
+  const hashes = (state && state.scaffold && state.scaffold.hashes) || {};
+  const names = Object.keys(hashes);
+  const kept = [];
+
+  if (!names.length) {
+    log("–", "no scaffolded files recorded");
+    return { kept: 0 };
+  }
+
+  for (const rel of names) {
+    const file = path.join(cwd, rel);
+    if (!fs.existsSync(file)) continue;
+
+    const matches = sha256(fs.readFileSync(file, "utf8")) === hashes[rel];
+    if (matches || doPurge) {
+      fs.rmSync(file);
+      log("✓", `removed ${rel}${matches ? "" : " (changed since the scaffold — --purge)"}`);
+    } else {
+      kept.push(rel);
+      log("→", `kept ${rel} — edited since the scaffold wrote it`);
+    }
+  }
+
+  for (const repository of (state && state.scaffold && state.scaffold.repositories) || []) {
+    const dir = path.join(cwd, repository);
+    if (!fs.existsSync(dir)) continue;
+    if (pruneEmpty(dir)) {
+      fs.rmdirSync(dir);
+      log("✓", `removed empty directory ${repository}/`);
+    }
+  }
+
+  return { kept: kept.length };
+}
+
+/** Depth-first: remove directories that have nothing left in them. */
+function pruneEmpty(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    return false;
+  }
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && pruneEmpty(full)) fs.rmdirSync(full);
+  }
+
+  try {
+    return fs.readdirSync(dir).length === 0;
+  } catch (err) {
+    return false;
+  }
 }
 
 if (require.main === module) {
