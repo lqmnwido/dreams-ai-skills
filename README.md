@@ -4,7 +4,7 @@ Per-repository AI governance skills for the **D-ReAMS** micro-frontend platform.
 
 Run it once, inside a repository. It writes `AGENTS.md` and a
 `.docs/project-governance/` tree — 33 documents — that tell any AI coding agent
-what is true about *this* repository before it touches a line of code.
+what is true about _this_ repository before it touches a line of code.
 
 Point it at an empty directory with `--kind=module-pair` and it scaffolds the
 two repositories a new module is made of, writes a generated routes/API table
@@ -39,15 +39,15 @@ working on, which is worse than no file at all.
 
 ## What it writes — and what it does not
 
-| Writes | Never writes |
-| --- | --- |
-| `AGENTS.md` (root) | any source file it did not scaffold |
-| `.docs/project-governance/**` (33 documents + README) | `package.json`, or any dependency |
-| `.docs/install.json` (state, the answers, the hashes, the review decisions) | a `postinstall` hook |
-| `README.md` — a routes/API table between markers, and at Full a workspace inventory | anything outside the current directory |
-| `<slug>_fe/`, `<slug>_be/` — only when `--parts` asks | an existing file, without `--force` |
-| a MinIO container — only after you say yes | a MinIO container, in a non-interactive run |
-| nothing at all, until a stage has been announced and a level chosen | a governance document, at any level |
+| Writes                                                                              | Never writes                                |
+| ----------------------------------------------------------------------------------- | ------------------------------------------- |
+| `AGENTS.md` (root)                                                                  | any source file it did not scaffold         |
+| `.docs/project-governance/**` (33 documents + README)                               | `package.json`, or any dependency           |
+| `.docs/install.json` (state, the answers, the hashes, the review decisions)         | a `postinstall` hook                        |
+| `README.md` — a routes/API table between markers, and at Full a workspace inventory | anything outside the current directory      |
+| `<slug>_fe/`, `<slug>_be/` — only when `--parts` asks                               | an existing file, without `--force`         |
+| a MinIO container — only after you say yes                                          | a MinIO container, in a non-interactive run |
+| nothing at all, until a stage has been announced and a level chosen                 | a governance document, at any level         |
 
 No `postinstall` script, deliberately: a documentation package must not change
 how your project behaves just by being present in `node_modules`.
@@ -64,9 +64,6 @@ sha256 instead — they are source, and source is edited.
 cd /path/to/repository
 
 npx -y @lqmnwido/dreams-ai-skills                       # interactive, asked at every stage
-npx -y @lqmnwido/dreams-ai-skills --dry-run             # show the plan, write nothing
-npx -y @lqmnwido/dreams-ai-skills --yes                # non-interactive, derived answers only
-npx -y @lqmnwido/dreams-ai-skills --level=full         # every stage at Full, no questions
 npx -y @lqmnwido/dreams-ai-skills --force              # overwrite a previous install (.bak kept)
 ```
 
@@ -98,19 +95,19 @@ paths, real counts — and then asks:
 ```
 
 The levels are the same three throughout, but they mean different things in
-different stages: a level only changes *scope* where a stage writes, and
-*verbosity* where a stage reads.
+different stages: a level only changes _scope_ where a stage writes, and
+_verbosity_ where a stage reads.
 
-| Stage | Economy | Recommended | Full |
-| --- | --- | --- | --- |
-| 1 Detection | the verdict and the one rule behind it | the verdict and every reason | + env keys, API bases, source counts |
-| 2 Intake | ask nothing; derive from flags, the last install, the repository | the flow's questions | + a confirmation of every detected identity value, and which values were read rather than typed |
-| 3 Plan | one line: files, holes | + every unresolved placeholder by name | + which document each placeholder sits in |
-| 4 Governance | **the same 33 documents** | the same 33, one line per file | + a per-section tally of what is still open |
-| 5 Scaffold | no test sources, no `.editorconfig` | with the test sources | + CI, CHANGELOG, pinned tool versions, inventory tables |
-| 6 README | no generated table | routes + API tables | + the workspace inventory |
-| 7 MinIO | do not look | detect, ask, then create | + a write and a delete, so "created" is proved |
-| 8 Result | the counts | the identity, the counts, every placeholder | + every review decision, and who made it |
+| Stage      | Economy                                                          | Recommended                                 | Full                                                                                            |
+| ---------- | ---------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Detection  | the verdict and the one rule behind it                           | the verdict and every reason                | + env keys, API bases, source counts                                                            |
+| Intake     | ask nothing; derive from flags, the last install, the repository | the flow's questions                        | + a confirmation of every detected identity value, and which values were read rather than typed |
+| Plan       | one line: files, holes                                           | + every unresolved placeholder by name      | + which document each placeholder sits in                                                       |
+| Governance | **the same 33 documents**                                        | the same 33, one line per file              | + a per-section tally of what is still open                                                     |
+| Scaffold   | no test sources, no `.editorconfig`                              | with the test sources                       | + CI, CHANGELOG, pinned tool versions, inventory tables                                         |
+| README     | no generated table                                               | routes + API tables                         | + the workspace inventory                                                                       |
+| MinIO      | do not look                                                      | detect, ask, then create                    | + a write and a delete, so "created" is proved                                                  |
+| Result     | the counts                                                       | the identity, the counts, every placeholder | + every review decision, and who made it                                                        |
 
 **A level never shrinks the governance tree.** All 33 documents are written at
 every level, and no rule inside them changes. A missing document is not a lighter
@@ -139,20 +136,20 @@ given, otherwise Recommended, and prints which one it used and why. It never
 silently guesses: `--level=nonsense` is reported and falls back to Recommended,
 not to the first thing in the list.
 
-| Detected | When |
-| --- | --- |
-| `new` | no `package.json`, no `vue.config.js`, no governance tree |
-| `shell` | `ModuleFederationPlugin` with `name: "shell"` |
-| `remote-module` | any other federation name, or a `remoteName` in `src/metadata.js` |
-| `shared-ui` | `package.json` name is `@2enapps/ui` |
-| `backend-api` | a server framework and no Vue CLI entry point |
-| `module-pair` | a `*_fe` directory beside a `*_be`, each with the build file it claims |
-| `unclassified` | D-ReAMS-adjacent but ambiguous — it asks, it does not guess |
+| Detected        | When                                                                   |
+| --------------- | ---------------------------------------------------------------------- |
+| `new`           | no `package.json`, no `vue.config.js`, no governance tree              |
+| `shell`         | `ModuleFederationPlugin` with `name: "shell"`                          |
+| `remote-module` | any other federation name, or a `remoteName` in `src/metadata.js`      |
+| `shared-ui`     | `package.json` name is `@2enapps/ui`                                   |
+| `backend-api`   | a server framework and no Vue CLI entry point                          |
+| `module-pair`   | a `*_fe` directory beside a `*_be`, each with the build file it claims |
+| `unclassified`  | D-ReAMS-adjacent but ambiguous — it asks, it does not guess            |
 
 ### Re-running
 
 A second run is idempotent, and it is safe specifically because the identity is
-*remembered* rather than re-derived. The module slug names two repositories and
+_remembered_ rather than re-derived. The module slug names two repositories and
 an object-storage bucket; deriving it again from the current directory would
 quietly produce `module_fe` where the first run wrote `module_demo_fe` and
 create a second pair of repositories nobody asked for.
@@ -196,15 +193,15 @@ npx -y @lqmnwido/dreams-ai-skills --yes \
   --apis=VUE_APP_URL_KOD,VUE_APP_URL_ASR
 ```
 
-| Flag | Flag | Flag |
-| --- | --- | --- |
-| `--scope=<id>` | `--module=<name>` | `--apis=<A,B>` |
-| `--kind=<id>` | `--display=<label>` | `--shell=<path>` |
-| `--slug=<slug>` | `--route-prefix=/x` | `--ui-dep=<value>` |
-| `--parts=<id>` | `--role=<roleId>` | `--name=<repo>` |
-| `--submodule=<a,b>` | `--port=<port\|n/a>` | `--owner=<name>` |
-| `--usecase=<text>` *(repeatable)* | `--backend-port=<port>` | `--deploy=<id>` |
-| `--blast-radius=<a,b>` | `--confirm-identity=<bool>` | |
+| Flag                              | Flag                        | Flag               |
+| --------------------------------- | --------------------------- | ------------------ |
+| `--scope=<id>`                    | `--module=<name>`           | `--apis=<A,B>`     |
+| `--kind=<id>`                     | `--display=<label>`         | `--shell=<path>`   |
+| `--slug=<slug>`                   | `--route-prefix=/x`         | `--ui-dep=<value>` |
+| `--parts=<id>`                    | `--role=<roleId>`           | `--name=<repo>`    |
+| `--submodule=<a,b>`               | `--port=<port\|n/a>`        | `--owner=<name>`   |
+| `--usecase=<text>` _(repeatable)_ | `--backend-port=<port>`     | `--deploy=<id>`    |
+| `--blast-radius=<a,b>`            | `--confirm-identity=<bool>` |                    |
 
 Behaviour flags: `--level=<id> --no-review --yes --force --dry-run --check
 --uninstall --quiet --help`, plus `--minio=<mode>`, `--bucket=<name>` and
@@ -228,12 +225,12 @@ npx -y @lqmnwido/dreams-ai-skills --yes \
   --port=3002 --backend-port=8081
 ```
 
-| `--parts=` | Creates |
-| --- | --- |
-| `both` *(default for `module-pair`)* | `module_demo_fe` and `module_demo_be`, as siblings |
-| `frontend` | `module_demo_fe` only |
-| `backend` | `module_demo_be` only |
-| `docs` *(default for every other kind)* | governance documents only |
+| `--parts=`                              | Creates                                            |
+| --------------------------------------- | -------------------------------------------------- |
+| `both` _(default for `module-pair`)_    | `module_demo_fe` and `module_demo_be`, as siblings |
+| `frontend`                              | `module_demo_fe` only                              |
+| `backend`                               | `module_demo_be` only                              |
+| `docs` _(default for every other kind)_ | governance documents only                          |
 
 One slug decides four names, so they cannot drift apart:
 
@@ -255,11 +252,11 @@ Spring's `EnvironmentPostProcessor` SPI, and a build that runs
 
 For a `module-pair` with one sub-module, `--parts=both`:
 
-| Level | Frontend | Backend | Total | Difference |
-| --- | --- | --- | --- | --- |
-| Economy | 16 | 21 | **37** | no `src/test/**`, no `.editorconfig` |
-| Recommended | 16 | 24 | **40** | test sources, so `mvn verify` is the gate the README claims |
-| Full | 18 | 26 | **44** | + `.github/workflows/verify.yml` and `CHANGELOG.md` per repository, + pinned plugin versions, + the inventory table in each README |
+| Level       | Frontend | Backend | Total  | Difference                                                                                                                         |
+| ----------- | -------- | ------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Economy     | 16       | 21      | **37** | no `src/test/**`, no `.editorconfig`                                                                                               |
+| Recommended | 16       | 24      | **40** | test sources, so `mvn verify` is the gate the README claims                                                                        |
+| Full        | 18       | 26      | **44** | + `.github/workflows/verify.yml` and `CHANGELOG.md` per repository, + pinned plugin versions, + the inventory table in each README |
 
 One file is added per additional sub-module (a view and its route), so a
 two-sub-module module pair is 38 / 41 / 45.
@@ -280,16 +277,18 @@ Every module README carries its contract between markers:
 
 ```markdown
 <!-- routes:start -->
+
 | Route | Name | View |
-| --- | --- | --- |
+| ----- | ---- | ---- |
+
 <!-- routes:end -->
 ```
 
-| Table | Written to | Read from |
-| --- | --- | --- |
-| `<!-- routes:start -->` | `<slug>_fe/README.md` (or the repository itself) | `vue.config.js` exposes, or the router |
-| `<!-- api:start -->` | `<slug>_be/README.md` (or the repository itself) | the Spring `@*Mapping` annotations |
-| `<!-- workspace:start -->` | `README.md` in the run directory | the intake — which repository is which, and what each one is for |
+| Table                      | Written to                                       | Read from                                                        |
+| -------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
+| `<!-- routes:start -->`    | `<slug>_fe/README.md` (or the repository itself) | `vue.config.js` exposes, or the router                           |
+| `<!-- api:start -->`       | `<slug>_be/README.md` (or the repository itself) | the Spring `@*Mapping` annotations                               |
+| `<!-- workspace:start -->` | `README.md` in the run directory                 | the intake — which repository is which, and what each one is for |
 
 The first two are read out of code and can therefore go stale, so `check` reports
 a drift. The workspace inventory is read out of the answers, so it cannot go stale
@@ -312,12 +311,12 @@ A module's uploads go to a bucket named after the module, in MinIO locally.
 npx -y @lqmnwido/dreams-ai-skills --minio=install
 ```
 
-| `--minio=` | Behaviour |
-| --- | --- |
-| `auto` *(default)* | Detect. If MinIO is absent, ask in a terminal. In a non-interactive run, print the commands and do nothing |
-| `install` | Start MinIO in Docker and create the bucket — explicit consent, usable from a script |
-| `check` | Report status only |
-| `skip` | Do not look |
+| `--minio=`         | Behaviour                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `auto` _(default)_ | Detect. If MinIO is absent, ask in a terminal. In a non-interactive run, print the commands and do nothing |
+| `install`          | Start MinIO in Docker and create the bucket — explicit consent, usable from a script                       |
+| `check`            | Report status only                                                                                         |
+| `skip`             | Do not look                                                                                                |
 
 **A non-interactive run never installs anything.** A pipeline cannot grant
 permission on anyone's behalf, so it prints instead of acting. Detection probes
@@ -370,7 +369,7 @@ Eight classes of problem, all offline and cheap:
    matches the documented one, the module declares its own `VUE_APP_URL_*`
 8. **Detection freshness** — the repository no longer classifies as it did
 
-Exit code 0 means healthy. The point is to fail *before* an agent starts working,
+Exit code 0 means healthy. The point is to fail _before_ an agent starts working,
 not after it has relied on a document describing a route nobody registered.
 
 ## Uninstall
@@ -421,13 +420,13 @@ README.md                              routes / API table, between markers
 
 The five documents that carry the most weight in this platform:
 
-| Document | Why it exists |
-| --- | --- |
+| Document                          | Why it exists                                                                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `03-architecture/API-CONTRACT.md` | The frontend and the backend are separate repositories. Neither can see the other; this file is the only shared truth about a request or a response. |
-| `02-governance/GUARDRAILS.md` | What must never happen: a second Keycloak client, a second Pinia, a feature page in the Shell, a route guard treated as the security boundary. |
-| `02-governance/ANTI-SLOP.md` | What this repository refuses to accept — and, honestly, which of those rules no tool can enforce. |
-| `07-delivery/SYNC.md` | The compatibility matrix and the update process for `@2enapps/ui`. Major versions are never upgraded automatically, and one repository at a time. |
-| `09-backend/STORAGE.md` | One bucket per module, named by the slug, written to only through this module's own service. |
+| `02-governance/GUARDRAILS.md`     | What must never happen: a second Keycloak client, a second Pinia, a feature page in the Shell, a route guard treated as the security boundary.       |
+| `02-governance/ANTI-SLOP.md`      | What this repository refuses to accept — and, honestly, which of those rules no tool can enforce.                                                    |
+| `07-delivery/SYNC.md`             | The compatibility matrix and the update process for `@2enapps/ui`. Major versions are never upgraded automatically, and one repository at a time.    |
+| `09-backend/STORAGE.md`           | One bucket per module, named by the slug, written to only through this module's own service.                                                         |
 
 ### The pipeline
 
@@ -462,7 +461,7 @@ const { flow, questions } = skills.buildFlow(report);
 const context = skills.buildContext(report, { MODULE_NAME: "v2t" });
 const { files, unresolved } = skills.renderTree(
   skills.collectGovernanceTemplates(),
-  context
+  context,
 );
 
 // A repository's routes and endpoints, read from the code that declares them
@@ -470,19 +469,19 @@ skills.readme.detectRoutes(process.cwd());
 skills.readme.detectApis("/path/to/service");
 
 // What a `module-pair` would create, without creating it
-skills.scaffold.plan(context).files;                 // Recommended
+skills.scaffold.plan(context).files; // Recommended
 skills.scaffold.plan(context, { level: "economy" }); // 37 files
-skills.scaffold.plan(context, { level: "full" });    // 44 files, with CI
-skills.collectScaffoldTemplates();                  // fe/... and be/... template source
+skills.scaffold.plan(context, { level: "full" }); // 44 files, with CI
+skills.collectScaffoldTemplates(); // fe/... and be/... template source
 
 // The review gates, without running them
-skills.LEVELS;                 // [{ digit: 1, id: "recommended" }, …]
-skills.REVIEW_STEPS;           // the 8 gated stages, in order
-skills.levelFor("2");          // "economy"
-skills.levelFor("nonsense");   // null
+skills.LEVELS; // [{ digit: 1, id: "recommended" }, …]
+skills.REVIEW_STEPS; // the 8 gated stages, in order
+skills.levelFor("2"); // "economy"
+skills.levelFor("nonsense"); // null
 const review = skills.review.createReview({ flags, prompter, interactive });
 await review.gate({ id: "scaffold", title: "5. Scaffold", writes, effects });
-review.summary();              // { default, levels, pinned, steps: { … } }
+review.summary(); // { default, levels, pinned, steps: { … } }
 ```
 
 Also exported: `manifest()`, `render()`, `collectTokens()`, `reportableTokens()`,
