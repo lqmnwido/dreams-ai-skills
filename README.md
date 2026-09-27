@@ -557,4 +557,8 @@ mentioned in `AGENTS.md` without existing.
 
 ## Licence
 
-UNLICENSED — internal to 2enapps.
+MIT — see [LICENSE](LICENSE).
+
+Version 0.1.0 was published with `"license": "UNLICENSED"`, which is npm's way of
+saying *do not use this*. It is an accidental setting rather than a decision, and it
+is corrected from 0.1.1.

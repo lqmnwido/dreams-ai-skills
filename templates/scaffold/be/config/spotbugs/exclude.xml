@@ -2,10 +2,45 @@
 <!--
   SpotBugs exclusions for {{MODULE_SLUG}}.
 
-  Empty on purpose. An exclusion list that starts full is a list nobody ever
+  Small on purpose. An exclusion list that starts full is a list nobody ever
   shortens, and every entry in it is a bug class the team agreed to stop seeing.
-  Add an entry only with a comment naming the finding, why it is safe *here*,
-  and the date — and expect it to be removed when the reason goes away.
+  Each entry below names the finding, says why it is safe *here*, and says what
+  would make it unsafe again — and each is expected to be removed when that reason
+  goes away. A finding that is not listed here must be fixed, not suppressed.
 -->
 <FindBugsFilter>
+  <!--
+    EI_EXPOSE_REP2 — "may expose internal representation by storing an externally
+    mutable object into a field".
+
+    The real finding here is that the pattern SpotBugs is warning about is how
+    Spring does dependency injection: a constructor takes a collaborator, and a
+    field holds it for the object's lifetime. Suppressing that would mean
+    suppressing injection, so the finding is addressed per-class instead.
+
+    A service or an SDK client injected this way is shared, effectively immutable
+    for the lifetime of the application, and never handed to a caller who could
+    mutate it. The field is `final` and private, and nothing exposes it: there is
+    no getter and no public accessor, so there is no path from a caller to the
+    stored object.
+
+    This becomes a real finding the moment any of the following is true:
+      - a setter or any other write path to the field is added,
+      - a getter returns the field directly rather than a copy,
+      - the injected type is mutable per-request state rather than a shared
+        stateless collaborator,
+      - the class stops being a Spring bean and is constructed by hand, where a
+        caller genuinely can retain a reference it was given.
+    In those cases delete this entry and fix the code instead.
+  -->
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP2" />
+    <Or>
+      <Class name="~.*\.\w*Controller" />
+      <Class name="~.*\.\w*Service" />
+    </Or>
+    <Or>
+      <Method name="&lt;init&gt;" />
+    </Or>
+  </Match>
 </FindBugsFilter>

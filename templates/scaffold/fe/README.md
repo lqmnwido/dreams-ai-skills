@@ -36,7 +36,7 @@ restart after any change — the Shell's `.env` is not visible to a remote.
 | Key | Purpose |
 | --- | --- |
 | `{{API_BASE_ENV}}` | This module's own backend service |
-| `VUE_APP_MODUL` | This module's own dev server origin |
+| `VUE_APP_{{MODULE_PASCAL_UPPER}}` | This module's own dev server origin |
 | `VUE_APP_SHELL` | The Shell origin used for CORS and the remote entry |
 
 ## Commands

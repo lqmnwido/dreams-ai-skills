@@ -16,5 +16,5 @@ export const {{MODULE_PASCAL}}_METADATA = Object.freeze({
   version: "{{MODULE_VERSION}}",
   apiVersion: {{API_VERSION}},
   routePrefix: "{{ROUTE_PREFIX}}",
-  defaultExpose: "views/{{SUBMODULE}}"
+  defaultExpose: "views/{{SUBMODULE}}",
 });

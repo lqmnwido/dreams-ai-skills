@@ -54,7 +54,23 @@ __VERIFY_LINE__
 
 `mvn verify` is the gate.
 __VERIFY_CLAUSE__
-The rules are in `.docs/project-governance/05-development/FORMAT-LINT.md`.
+
+What it runs, in order:
+
+| Step | Tool | Fails on |
+| --- | --- | --- |
+| `validate` | Spotless, Palantir Java Format | any formatting difference, unused import, misplaced annotation |
+| `compile` | javac | any type error |
+| `process-test-classes` | Checkstyle | the structural rules in `config/checkstyle/checkstyle.xml` |
+| `test` | JUnit 5 | any failing test |
+| `verify` | SpotBugs | a bug pattern above the Medium threshold |
+
+`config/spotbugs/exclude.xml` starts with one entry — `EI_EXPOSE_REP2` on
+constructors, which is how Spring injects a collaborator. That entry carries the
+conditions under which it stops being safe; when one of them becomes true, delete
+the entry and fix the code rather than extending the filter.
+
+The rules behind these choices are in `.docs/project-governance/05-development/FORMAT-LINT.md`.
 
 ## Layout
 

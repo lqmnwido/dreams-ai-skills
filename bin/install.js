@@ -731,7 +731,7 @@ function runScaffoldStep({ context, report, flags, dryRun, quiet, level = "recom
 
 /** Ask once, in a terminal, and never in a pipeline. */
 async function askInstallMinio(flags, prompter) {
-  if (!process.stdin.isTTY || flags.yes) return false;
+  if (flags.yes || !prompter.isInteractive()) return false;
   const answer = await prompter.ask(
     {
       key: "MINIO_INSTALL",
@@ -834,7 +834,7 @@ async function runMinioStep({ context, report, flags, dryRun, quiet, level = "re
   }
 
   if (!install) {
-    if (policy === "auto" && !process.stdin.isTTY) {
+    if (policy === "auto" && !prompter.isInteractive()) {
       log("→", "non-interactive run — not installing anything. Pass --minio=install to let it.", quiet);
     }
     log("→", "to start MinIO and create the bucket by hand:", quiet);
@@ -983,6 +983,56 @@ function printSummary(
  * second prompt would land in a terminal that has already been handed back — the
  * kind of thing that works in a shell and hangs in a pipeline.
  */
+/**
+ * Decide whether this run may put a question in front of a person — and be able to
+ * say why, in one line, when the answer is no.
+ *
+ * This used to be `Boolean(process.stdin.isTTY)` and nothing else. That is a single
+ * point of failure for the entire review feature: on any terminal that does not
+ * hand the child process a stdin TTY, all eight gates silently fell back to
+ * Recommended, the intake was skipped, and the run wrote 34 documents with 73 open
+ * placeholders and no source at all — while still exiting 0 and only mentioning the
+ * fallback in a small `→` line in the middle of the output.
+ *
+ * So the test is two-sided now, and it is never allowed to be silent:
+ *
+ *   - `--yes`, `--quiet` and a CI environment are *deliberate* non-interactive
+ *     runs. A person asked for those, so there is nothing to warn about.
+ *   - Otherwise a run may ask if *either* stream is a terminal. Losing the stdin
+ *     flag is a quirk of the wrapper, not a statement about the person sitting at
+ *     the keyboard.
+ *   - When we decide not to ask and nobody asked us not to, we say so up front, in
+ *     the first lines of output, with the command to get the prompts back.
+ */
+function resolveInteractivity(flags, quiet) {
+  if (flags.yes) return { interactive: false, why: "--yes", warn: null };
+  if (quiet) return { interactive: false, why: "--quiet", warn: null };
+  if (process.env.CI) return { interactive: false, why: "CI environment", warn: null };
+  if (flags["no-review"]) {
+    return { interactive: true, why: "--no-review", warn: null };
+  }
+
+  const stdin = Boolean(process.stdin.isTTY);
+  const stdout = Boolean(process.stdout.isTTY);
+
+  if (stdin || stdout) {
+    return { interactive: true, why: stdin ? "a terminal on stdin" : "a terminal on stdout", warn: null };
+  }
+
+  return {
+    interactive: false,
+    why: "no terminal on stdin or stdout",
+    warn:
+      "This run cannot ask you anything: neither stdin nor stdout is a terminal.\n" +
+      "      That usually means output is being piped or redirected. It does not\n" +
+      "      mean the questions were answered, so every value below is a guess\n" +
+      "      that was left as a {{PLACEHOLDER}} rather than invented.\n" +
+      "      To be asked instead: run this in a normal terminal window, or pass the\n" +
+      "      answers as flags (--module, --parts, --owner, ...), or set --level=full\n" +
+      "      to get the full output at every step without being asked."
+  };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const { flags } = parseArgs(argv);
@@ -1006,9 +1056,19 @@ async function main() {
   // The prompter is built first because the review needs it: a gate with no
   // prompter has nobody to ask, and silently falls back to Recommended. Building
   // them in the other order would make the interactive path unreachable.
-  const interactive = !flags.yes && Boolean(process.stdin.isTTY) && !quiet;
-  const prompter = createPrompter({ interactive });
-  const review = skills.review.createReview({ flags, quiet, interactive, prompter });
+  const session = resolveInteractivity(flags, quiet);
+  if (session.warn) {
+    console.log("");
+    console.log(`  ! ${session.warn}`);
+    console.log("");
+  }
+  const prompter = createPrompter({ interactive: session.interactive });
+  const review = skills.review.createReview({
+    flags,
+    quiet,
+    interactive: session.interactive,
+    prompter
+  });
 
   try {
     await run(flags, { quiet, review, prompter });
@@ -1199,14 +1259,24 @@ async function run(flags, { quiet, review, prompter }) {
 
   /* 5. Scaffold ------------------------------------------------------ */
 
-  const parts = context.SCAFFOLD || "docs";
+  // "nobody asked for docs only" and "the identity was never established, so there
+  // is nothing to scaffold" both arrive here as a missing `SCAFFOLD`. They are not
+  // the same fact, and reporting them as one is how a run writes 34 documents with
+  // 73 open placeholders and no source, skips the scaffold step with a message
+  // blaming a `--parts=docs` flag the person never typed, and still exits 0.
+  const partsChosen = flags.parts || context.SCAFFOLD;
+  const identityMissing = !partsChosen && !(context.MODULE_NAME || "").trim();
+  const parts = partsChosen || "docs";
   const scopes = parts === "docs" ? null : scaffoldLib.describeScopes(context);
 
   const scaffoldLevel = await review.gate({
     id: "scaffold",
     title: "5. Scaffold",
     applicable: parts !== "docs",
-    skipReason: `--parts=docs — governance documents only, so there is no source to create`,
+    skipReason: identityMissing
+      ? "this module's identity was never established, so there is nothing to scaffold — " +
+        "it defaulted to documents only, not because you asked for that"
+      : `--parts=docs — governance documents only, so there is no source to create`,
     writes:
       parts === "docs" || !scopes
         ? ["write no source and create no repository"]

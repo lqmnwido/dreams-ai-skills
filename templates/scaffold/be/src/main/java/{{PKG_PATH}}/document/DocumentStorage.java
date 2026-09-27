@@ -25,8 +25,7 @@ public interface DocumentStorage {
      * @param size bytes written
      * @param contentType the media type recorded with the object
      */
-    record Stored(String key, long size, String contentType) {
-    }
+    record Stored(String key, long size, String contentType) {}
 
     /**
      * A short-lived download location.
@@ -34,8 +33,7 @@ public interface DocumentStorage {
      * @param url the presigned location; no credentials are in the response body
      * @param ttlSeconds how long the location stays valid
      */
-    record Download(URI url, long ttlSeconds) {
-    }
+    record Download(URI url, long ttlSeconds) {}
 
     /**
      * Store an object under {@code objectKey}, replacing anything already there.

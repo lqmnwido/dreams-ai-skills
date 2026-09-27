@@ -4,9 +4,17 @@ const { ModuleFederationPlugin } = require("webpack").container;
 // This module's own environment. A remote compiles separately from the Shell,
 // so nothing here is read from the Shell's `.env` — see
 // .docs/project-governance/09-backend/SPRING-BOOT.md and 05-development/TOOLS.md.
-const remoteBase = (process.env.VUE_APP_MODUL || "http://localhost:{{REMOTE_PORT}}").replace(/\/+$/, "");
+// Read through this module's own namespaced key, and fall back to a second name for
+// builds that predate the namespacing. The namespaced key always wins.
+const remoteBase = (
+  process.env.VUE_APP_{{MODULE_PASCAL_UPPER}} ||
+  process.env.VUE_APP_MODUL ||
+  "http://localhost:{{REMOTE_PORT}}"
+).replace(/\/+$/, "");
 const shellBase = (process.env.VUE_APP_SHELL || "http://localhost:3000").replace(/\/+$/, "");
-const remotePort = Number(process.env.VUE_APP_MODUL_PORT || {{REMOTE_PORT}});
+const remotePort = Number(
+  process.env.VUE_APP_{{MODULE_PASCAL_UPPER}}_PORT || process.env.VUE_APP_MODUL_PORT || {{REMOTE_PORT}}
+);
 const isRemoteBuild = process.env.VUE_APP_REMOTE !== "off";
 
 // Packages that must resolve to a single instance shared with the Shell.

@@ -24,9 +24,9 @@ export function createApiClient({ getHeaders = () => ({}), fetchImpl = fetch } =
       headers: {
         ...auth,
         ...headers,
-        ...(isForm ? {} : { "Content-Type": "application/json" })
+        ...(isForm ? {} : { "Content-Type": "application/json" }),
       },
-      body: isForm ? body : body === undefined ? undefined : JSON.stringify(body)
+      body: isForm ? body : body === undefined ? undefined : JSON.stringify(body),
     };
 
     const response = await fetchImpl(url, init);
@@ -43,7 +43,7 @@ export function createApiClient({ getHeaders = () => ({}), fetchImpl = fetch } =
     get: (path) => request(path),
     post: (path, body) => request(path, { method: "POST", body }),
     put: (path, body) => request(path, { method: "PUT", body }),
-    remove: (path) => request(path, { method: "DELETE" })
+    remove: (path) => request(path, { method: "DELETE" }),
   };
 }
 

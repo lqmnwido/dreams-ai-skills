@@ -27,7 +27,21 @@ module.exports = {
   },
   settings: {
     "import/resolver": {
-      node: { extensions: [".js", ".mjs", ".cjs", ".vue"] }
+      // `conditions: ["import"]` is what makes `@2enapps/ui` resolve. That
+      // package's `exports` map declares `"." : { "import": "./dist/index.js" }`
+      // with no `require` and no `default`, and the resolver runs in CommonJS
+      // mode, so without this every module reports its UI import as unresolved
+      // even though webpack builds it. Adding `"default"` alongside it covers
+      // packages that publish the other shape.
+      //
+      // This needs `eslint-import-resolver-node@^0.4.0`, forced by the
+      // `overrides` block in package.json — the resolver 0.3.x that
+      // eslint-plugin-import depends on does not understand subpath `exports`
+      // at all, so `@2enapps/ui/styles.css` is unresolved there too.
+      node: {
+        extensions: [".js", ".mjs", ".cjs", ".vue", ".css"],
+        conditions: ["import", "default"]
+      }
     }
   },
   rules: {

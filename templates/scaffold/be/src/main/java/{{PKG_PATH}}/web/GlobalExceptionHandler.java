@@ -1,5 +1,6 @@
 package {{BASE_PACKAGE}}.web;
 
+import {{BASE_PACKAGE}}.document.StorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -8,8 +9,6 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
-
-import {{BASE_PACKAGE}}.document.StorageException;
 
 /**
  * Turns every failure into one response shape, in one place.
@@ -60,15 +59,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(StorageException.class)
     public ResponseEntity<ApiResponse<Void>> storage(StorageException ex) {
         log.error("object storage failed: {}", ex.getMessage(), ex);
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(ApiResponse.failure("object storage is unavailable"));
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ApiResponse.failure("object storage is unavailable"));
     }
 
     /** Nothing else matched. Full stack to the log, generic body to the caller. */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> unexpected(Exception ex) {
         log.error("unhandled exception", ex);
-        return ResponseEntity.internalServerError()
-                .body(ApiResponse.failure("unexpected server error"));
+        return ResponseEntity.internalServerError().body(ApiResponse.failure("unexpected server error"));
     }
 }

@@ -30,6 +30,9 @@ __UI_DEP__
     "prettier": "^3.3.3",
     "webpack": "^5.94.0"
   },
+  "overrides": {
+    "eslint-import-resolver-node": "^0.4.0"
+  },
   "engines": {
     "node": ">=20"
   }

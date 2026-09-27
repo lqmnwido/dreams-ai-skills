@@ -1,6 +1,6 @@
 {
   "name": "@lqmnwido/dreams-ai-skills",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Per-repository AI governance skills for the D-ReAMS micro-frontend platform. npx it into a Shell, a frontend module, the shared UI package, or a backend API to generate AGENTS.md and .docs/project-governance/**.",
   "main": "index.js",
   "bin": {
@@ -24,16 +24,28 @@
     "lqmnwido"
   ],
   "author": "lqmnwido",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lqmnwido/dreams-ai-skills.git"
+  },
+  "homepage": "https://github.com/lqmnwido/dreams-ai-skills#readme",
+  "bugs": {
+    "url": "https://github.com/lqmnwido/dreams-ai-skills/issues"
+  },
   "files": [
     "bin/",
     "lib/",
     "templates/",
     "index.js",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

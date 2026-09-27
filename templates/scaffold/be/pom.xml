@@ -36,6 +36,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <minio.version>8.5.17</minio.version>
     <spotless.version>2.44.4</spotless.version>
+    <palantir.format.version>2.50.0</palantir.format.version>
     <checkstyle.version>3.6.0</checkstyle.version>
     <spotbugs.version>4.8.6.4</spotbugs.version>
 __BE_CI_PROPERTIES__
@@ -83,7 +84,25 @@ __BE_TEST_DEPENDENCY__
             <includes>
               <include>src/main/java/**/*.java</include>
 __BE_SPOTLESS_TEST_INCLUDE__            </includes>
-            <springJavaFormat/>
+            <!--
+              Palantir Java Format, not Spring Java Format.
+
+              `<springJavaFormat/>` used to sit here, and it broke `mvn verify` on
+              every single module this template produced: Spotless removed that
+              built-in step, and its own `com.diffplug.spotless.maven.java.Java`
+              config class has no `springJavaFormat` field, so the plugin failed
+              during configuration with
+
+                  Cannot find 'springJavaFormat' in class ...java.Java
+
+              before compiling a line. Palantir is a supported `java` step, it is
+              what Spring Framework itself adopted, and it is verified to pass
+              `mvn verify` on a freshly scaffolded module. Run `mvn spotless:apply`
+              after changing this version — never hand-edit Java to satisfy it.
+            -->
+            <palantirJavaFormat>
+              <version>${palantir.format.version}</version>
+            </palantirJavaFormat>
             <removeUnusedImports/>
             <formatAnnotations/>
           </java>

@@ -610,6 +610,7 @@ async function selfCheck(log) {
   checkDocs(problems, log);
   await checkScaffoldLevels(problems, log);
   await checkReviewGates(problems, log);
+  checkScaffoldGates(problems, log);
   checkIntakeTiers(problems, log);
   checkSignOffContract(agents, problems, log);
   checkReadmeRendering(problems, log);
@@ -906,7 +907,7 @@ async function checkReviewGates(problems, log) {
     effects: { economy: "fewer", recommended: "the same", full: "more" }
   });
   if (assumed !== "recommended") problems.push(`a non-interactive gate chose ${assumed}, expected recommended`);
-  if (!collected.join("\n").includes("no terminal to ask")) {
+  if (!collected.join("\n").includes("nobody could be asked")) {
     problems.push("a non-interactive gate did not say it had nobody to ask");
   }
   if (quietReview.summary().steps.scaffold.source !== "assumed") {
@@ -1014,15 +1015,385 @@ async function checkReviewGates(problems, log) {
 
   // The unit checks above hand the review a prompter directly. The installer has
   // to do the same, and nothing else in the suite can tell: without it every
-  // gate falls back to "no terminal to ask" and an interactive run silently
+  // gate falls back to "nobody could be asked" and an interactive run silently
   // installs at Recommended with the question never printed.
   const source = fs.readFileSync(path.join(__dirname, "install.js"), "utf8");
-  const created = source.match(/createReview\(\{([^}]*)\}\)/);
+  const created = source.match(/createReview\(\{([^}]*)\}\)/s);
   if (!created || !/prompter/.test(created[1])) {
     problems.push("bin/install.js creates the review without a prompter, so no gate can ever ask");
   }
 
+  // The bug this guards against is not hypothetical: on a terminal that does not
+  // hand the child process a stdin TTY, `process.stdin.isTTY` alone was false, so
+  // all eight gates fell back to Recommended, the intake was skipped, and the run
+  // wrote 34 documents with 73 open placeholders and no source — while exiting 0
+  // and blaming a `--parts=docs` flag nobody had passed.
+  //
+  // Two things have to hold. The decision may not rest on the stdin flag alone, and
+  // it has to reach the person when it decides not to ask.
+  if (!/resolveInteractivity/.test(source)) {
+    problems.push("bin/install.js decides interactivity without resolveInteractivity, so it is back to trusting one flag");
+  } else {
+    const body = (source.match(/function resolveInteractivity[\s\S]*?\n\}/) || [""])[0];
+    for (const [needle, why] of [
+      ["flags.yes", "it does not recognise --yes as a deliberate non-interactive run"],
+      ['process.env.CI', "it does not recognise a CI environment, where waiting for a keypress would hang the build"],
+      // The precise condition, not the word "stdout": naming stdout somewhere in
+      // the function while still testing stdin alone is exactly the regression.
+      ["if (stdin || stdout)", "it tests only stdin, so a wrapper that drops that one flag still silences every gate"],
+      // Likewise the word "warn" appears on the deliberate paths as `warn: null`.
+      // The thing that must exist is an actual message on the involuntary one.
+      ["cannot ask you anything", "it decides not to ask without saying so, so the fallback stays silent"]
+    ]) {
+      if (!body.includes(needle)) problems.push(`resolveInteractivity ${why}`);
+    }
+  }
+
+  // The prompter used to re-test `isTTY` on top of the caller's decision, which
+  // undid the fix above: the caller said "ask", the prompter refused, and the
+  // result was the same silence with an extra step in between.
+  const promptSource = fs.readFileSync(
+    path.join(__dirname, "..", "lib", "prompt.js"),
+    "utf8"
+  );
+  const isInteractive = promptSource.match(/function isInteractive\(\)\s*\{[^}]*\}/);
+  if (!isInteractive) {
+    problems.push("lib/prompt.js has no isInteractive to inspect");
+  } else if (/isTTY/.test(isInteractive[0])) {
+    problems.push(
+      "lib/prompt.js's isInteractive re-tests isTTY, so it overrides the caller's decision and silences every gate"
+    );
+  }
+
+  // "the person asked for documents only" and "the identity was never established"
+  // both arrive as a missing SCAFFOLD. Reporting them the same way is how a run
+  // skips the scaffold step claiming a --parts=docs flag nobody typed.
+  const skip = (source.match(/skipReason:[\s\S]{0,400}/) || [""])[0];
+  if (skip.includes("`--parts=docs") && !skip.includes("identityMissing")) {
+    problems.push(
+      "bin/install.js still attributes every documents-only run to --parts=docs, even when the identity was never established"
+    );
+  }
+  if (!/identityMissing\s*\n\s*\?/.test(source) && !/identityMissing\s*\?/.test(source)) {
+    problems.push(
+      "bin/install.js computes whether the identity was missing but never uses it in the skip reason"
+    );
+  }
+
   log("✓", `review gates: 3 levels, ${steps.length} steps, asked / assumed / pinned all recorded`);
+}
+
+/**
+ * The JavaScript out of a scaffolded frontend file.
+ *
+ * A `.vue` file is three languages in a trench coat, and two of them — the
+ * template's HTML and the style block's CSS — are full of `property: value` lines
+ * that a naive scan reads as object literals. `padding: 24px;` is not an object
+ * property that needs a trailing comma, so checking a `.vue` file as if it were
+ * JavaScript produces failures that are not there. The `.vue` files that ship in
+ * `fe/src` all use `<script setup>`, so the script blocks are what get read.
+ */
+function jsOnly(body, rel) {
+  const code = rel.endsWith(".vue")
+    ? [...body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join("\n")
+    : body;
+  return code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+/**
+ * The `key: value` lines that are the final entry of an object literal and carry
+ * no trailing comma.
+ *
+ * Deliberately narrow. It only looks at a property whose value starts on its own
+ * line and whose next line closes the literal, because that is the shape prettier
+ * rewrites and the shape the broken templates had. A line that ends in `{` is
+ * skipped: prettier leaves the opening brace of a last-but-one nested object alone,
+ * and flagging it would be a false positive on a file that already passes.
+ */
+function lastPropertiesWithoutComma(code) {
+  const lines = code.split("\n");
+  const misses = [];
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i].trim();
+    const next = lines[i + 1].trim();
+    if (!/^[A-Za-z_$][\w$]*:\s+\S/.test(line)) continue;
+    if (!/^[}\]]/.test(next)) continue;
+    if (line.endsWith(",") || line.endsWith("{") || line.endsWith(";")) continue;
+    misses.push(`${line.slice(0, 40)}`);
+  }
+  return misses;
+}
+
+/**
+ * The body of an XML file with its comments removed.
+ *
+ * Both config files that matter here explain their own contents in a long comment
+ * — which is the only reason a reader can tell whether an exclusion is still
+ * justified. Testing the raw text therefore proves nothing: `EI_EXPOSE_REP2` is
+ * named in the comment that explains the exclusion, so a check reading the file
+ * as-is passes even when the exclusion itself has been deleted. Only the markup
+ * is configuration; the prose is documentation.
+ */
+function withoutXmlComments(body) {
+  return body.replace(/<!--[\s\S]*?-->/g, "");
+}
+
+/** The code out of a Java file: javadoc, block comments and line comments gone. */
+function withoutJavaComments(body) {
+  return body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+/**
+ * JSON out of a scaffold *template*, which is not itself valid JSON.
+ *
+ * `fe/package.json` carries `__UI_DEP__` where the installer will splice in the
+ * shared-UI dependency. A bare `__UI_DEP__` is not a JSON value, so reading the
+ * template with `JSON.parse` throws and takes the whole self-test down with it —
+ * which is exactly what happened the first time this was written.
+ *
+ * The stub needs to be a key and a value, because these directives stand where an
+ * *entry* goes — inside an object, not inside an array. A bare `null` there is
+ * parsed as a property name and rejected. It also needs a trailing comma, because
+ * the snippets the installer splices in supply their own (`uiDependencySnippet`
+ * ends in `,` or renders nothing at all). A directive that is the last thing in
+ * its object is the one case where that comma would be a trailing comma, which
+ * `JSON.parse` also rejects.
+ *
+ * `{{TOKEN}}` placeholders are quoted inside the template and parse as ordinary
+ * strings, so they need no special handling.
+ */
+function parseTemplateJson(body, rel) {
+  const stubbed = body.replace(
+    /^[ \t]*__[A-Z_]+__[ \t]*$\n(?![ \t]*[}\]])/gm,
+    '    "__scaffold_directive__": null,\n'
+  );
+  try {
+    return JSON.parse(stubbed);
+  } catch (err) {
+    throw new Error(`${rel} is not parseable as JSON even with its directives stubbed: ${err.message}`);
+  }
+}
+
+/**
+ * The scaffolded repositories have to pass the gates their own READMEs tell the
+ * reader to run. This is the check that was missing: 0.1.0 shipped a package whose
+ * generated backend could not run `mvn verify` and whose generated frontend could
+ * not run `npm run verify`, and nothing in the suite noticed, because every
+ * existing check read the templates and never built from them.
+ *
+ * Both failures were the same class of mistake — a config that says one thing and a
+ * formatter that demands another:
+ *
+ *   - `<springJavaFormat/>` is not a Spotless step any more, so the plugin failed
+ *     while parsing its own configuration.
+ *   - the checkstyle config had no DOCTYPE, so it failed before reading a rule.
+ *   - `io.minio.Method` does not exist; the class is `io.minio.http.Method`.
+ *   - the SpotBugs filter was empty while the code tripped `EI_EXPOSE_REP2`.
+ *   - the frontend's `.prettierrc.json` asked for single quotes and es5 trailing
+ *     commas while every generated file used double quotes and none.
+ *
+ * So the checks below assert the *agreement* rather than either side of it, and
+ * each names the mismatch it exists to catch.
+ *
+ * Every assertion here was mutation-verified: break the thing, confirm the check
+ * complains, put it back. Each of the three config files explains itself in a long
+ * comment, and reading that prose as if it were configuration silently disarmed
+ * three of these assertions before they were caught. `withoutXmlComments`,
+ * `withoutJavaComments` and the `<java>`-block extraction exist because of that.
+ */
+function checkScaffoldGates(problems, log) {
+  const root = path.join(__dirname, "..", "templates", "scaffold");
+  const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+
+  const pom = read("be/pom.xml");
+
+  // 1. The Spotless java block must name a step that exists in the plugin. The
+  //    dead step is named in a comment explaining why it went, so the comment is
+  //    stripped and only the configuration itself is inspected.
+  const javaBlock = (pom.match(/<java>[\s\S]*?<\/java>/) || [""])[0].replace(/<!--[\s\S]*?-->/g, "");
+  if (/<springJavaFormat[\s/>]/.test(javaBlock)) {
+    problems.push("be/pom.xml configures springJavaFormat, which Spotless removed — mvn verify cannot parse it");
+  }
+  if (!/palantirJavaFormat|googleJavaFormat|eclipse|cleanthat/.test(javaBlock)) {
+    problems.push(
+      "be/pom.xml's Spotless <java> block names no supported formatter, so `mvn verify` will fail on any formatting question"
+    );
+  }
+  for (const step of ["removeUnusedImports", "formatAnnotations"]) {
+    if (!javaBlock.includes(step)) problems.push(`be/pom.xml's Spotless <java> block is missing <${step}>`);
+  }
+
+  // 2. Checkstyle cannot parse a config with no DOCTYPE. The error it produces
+  //    ("Document root element \"module\", must match DOCTYPE root \"null\"")
+  //    reads as a malformed file rather than a missing declaration.
+  const checkstyle = withoutXmlComments(read("be/config/checkstyle/checkstyle.xml"));
+  if (!/<!DOCTYPE module PUBLIC/.test(checkstyle)) {
+    problems.push("be/config/checkstyle/checkstyle.xml has no DOCTYPE, so maven-checkstyle-plugin cannot parse it");
+  }
+  if (!/configuration_1_3\.dtd/.test(checkstyle)) {
+    problems.push("the checkstyle DOCTYPE does not point at a versioned DTD");
+  }
+
+  // 3. The MinIO SDK moved Method into io.minio.http.
+  const minio = withoutJavaComments(read("be/src/main/java/{{PKG_PATH}}/storage/MinioStorageService.java"));
+  if (/^import io\.minio\.Method;$/m.test(minio)) {
+    problems.push("MinioStorageService imports io.minio.Method, which does not exist — it is io.minio.http.Method");
+  }
+  if (!/^import io\.minio\.http\.Method;$/m.test(minio)) {
+    problems.push("MinioStorageService does not import io.minio.http.Method");
+  }
+
+  // 4. The SpotBugs filter is referenced by the pom, so it has to exist and has to
+  //    cover what the generated code actually trips. The comments are stripped
+  //    first: the file explains the exclusion in prose, and the prose names the
+  //    very finding the markup is supposed to be suppressing.
+  const spotbugs = withoutXmlComments(read("be/config/spotbugs/exclude.xml"));
+  if (!/<FindBugsFilter>/.test(spotbugs)) problems.push("be/config/spotbugs/exclude.xml is not a FindBugsFilter document");
+  if (!/<Bug\s+pattern="EI_EXPOSE_REP2"/.test(spotbugs)) {
+    problems.push(
+      "the SpotBugs filter does not suppress EI_EXPOSE_REP2, which the generated constructors trip on every module"
+    );
+  }
+  if (!/<excludeFilterFile>\s*config\/spotbugs\/exclude\.xml\s*<\/excludeFilterFile>/.test(pom)) {
+    problems.push("be/pom.xml does not point SpotBugs at config/spotbugs/exclude.xml");
+  }
+
+  // 5. The app class name lives in the file name, not in the token: a template
+  //    that renders {{MODULE_CLASS}} inside {{MODULE_CLASS}}Application.java
+  //    produces a public class the compiler rejects.
+  const appClass = read("be/src/main/java/{{PKG_PATH}}/{{MODULE_CLASS}}Application.java");
+  if (!/public class \{\{MODULE_CLASS\}\}Application \{/.test(appClass)) {
+    problems.push("the Spring Boot app template must declare {{MODULE_CLASS}}Application to match its file name");
+  }
+  const appTest = read("be/src/test/java/{{PKG_PATH}}/{{MODULE_CLASS}}ApplicationTests.java");
+  if (!/class \{\{MODULE_CLASS\}\}ApplicationTests \{/.test(appTest)) {
+    problems.push("the app test template must declare {{MODULE_CLASS}}ApplicationTests to match its file name");
+  }
+
+  // 6. The frontend config and the frontend files have to agree on quotes and
+  //    trailing commas. Neither side is wrong on its own; disagreeing is what made
+  //    `npm run verify` fail on a module the installer had just written.
+  const prettierrc = JSON.parse(read("fe/.prettierrc.json"));
+  const feSrc = [
+    "fe/src/metadata.js",
+    "fe/src/preview/main.js",
+    "fe/src/preview/router.js",
+    "fe/src/preview/pinia.js",
+    "fe/src/preview/App.vue",
+    "fe/src/services/{{MODULE_SNAKE}}/http.js",
+    "fe/src/views/__SUB__.vue"
+  ];
+  for (const rel of feSrc) {
+    const body = read(rel);
+    const code = jsOnly(body, rel);
+    const hasSingle = /(^|[^"'`\\])'[^'\n]*'/.test(code);
+    const hasDouble = /(^|[^"'`\\])"[^"\n]*"/.test(code);
+    if (prettierrc.singleQuote === false && hasSingle) {
+      problems.push(`${rel} uses single quotes but .prettierrc.json sets singleQuote: false`);
+    }
+    if (prettierrc.singleQuote === true && hasDouble) {
+      problems.push(`${rel} uses double quotes but .prettierrc.json sets singleQuote: true`);
+    }
+    if (prettierrc.endOfLine === "lf" && body.includes("\r")) {
+      problems.push(`${rel} contains CRLF but .prettierrc.json sets endOfLine: lf`);
+    }
+    // `trailingComma: "all"` also puts a comma on the last property of an object
+    // literal, which is the one the router snippet kept getting wrong.
+    if (prettierrc.trailingComma === "all") {
+      for (const miss of lastPropertiesWithoutComma(code)) {
+        problems.push(
+          `${rel} has "${miss}" as the last property of an object without a trailing comma, but .prettierrc.json sets trailingComma: all`
+        );
+      }
+    }
+  }
+  if (prettierrc.endOfLine !== "lf") {
+    problems.push("fe/.prettierrc.json must set endOfLine: lf so a Windows checkout cannot reintroduce the 0.1.0 failure");
+  }
+
+  // 7. The generated route table is built in JS, not from a template, so it has to
+  //    be checked where it is actually produced.
+  const routes = skills.scaffold.routesSnippet({
+    MODULE_NAME: "m",
+    MODULE_DISPLAY: "M",
+    ROUTE_PREFIX: "/m",
+    SUBMODULES: "program/p"
+  });
+  for (const [needle, why] of [
+    ["component: () => import(", "routesSnippet omits the component property"],
+    ["),\n  },", "routesSnippet leaves the last property or the closing brace without a trailing comma"],
+    ['{ path: "/", redirect:', "routesSnippet omits the root redirect"]
+  ]) {
+    if (!routes.includes(needle)) problems.push(why);
+  }
+
+  // 8. Every env key a module owns has to be namespaced by module, or two remotes
+  //    on one machine decide each other's remote base.
+  const envExample = read("fe/.env.example");
+  const vueConfig = read("fe/vue.config.js");
+  if (/^VUE_APP_MODUL=/m.test(envExample)) {
+    problems.push("fe/.env.example defines a bare VUE_APP_MODUL, which two modules on one machine will collide on");
+  }
+  if (!/VUE_APP_\{\{MODULE_PASCAL_UPPER\}\}=/.test(envExample)) {
+    problems.push("fe/.env.example does not namespace this module's own origin key by module");
+  }
+  if (!/VUE_APP_\{\{MODULE_PASCAL_UPPER\}\}/.test(vueConfig)) {
+    problems.push("fe/vue.config.js does not read this module's own namespaced origin key");
+  }
+
+  // 9. Line endings are part of the contract, not a matter of taste: 0.1.0 shipped
+  //    97 CRLF files because the package was published from a Windows checkout.
+  const attrs = path.join(__dirname, "..", ".gitattributes");
+  if (!fs.existsSync(attrs)) {
+    problems.push("there is no .gitattributes, so a Windows checkout republishes every file as CRLF");
+  } else if (!/\* text=auto eol=lf/.test(fs.readFileSync(attrs, "utf8"))) {
+    problems.push(".gitattributes does not pin text files to LF");
+  }
+
+  // 10. The licence was UNLICENSED in 0.1.0, which npm reads as "do not use this".
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+  if (pkg.license === "UNLICENSED" || !pkg.license) {
+    problems.push(`package.json license is ${JSON.stringify(pkg.license)}, which tells npm this is not for use`);
+  }
+  if (!pkg.repository || !pkg.repository.url) {
+    problems.push("package.json has no repository url, so the npm page cannot link to the source");
+  }
+  if (!pkg.publishConfig || pkg.publishConfig.access !== "public") {
+    problems.push("package.json does not declare publishConfig.access public");
+  }
+  if (!fs.existsSync(path.join(__dirname, "..", "LICENSE"))) {
+    problems.push("package.json declares a licence but there is no LICENSE file");
+  }
+
+  // 11. The lint resolver's `conditions` and the version that honours it live in
+  //     two different files, and nothing at build time connects them. The result
+  //     is a silent one: delete the `overrides` block and every module goes back
+  //     to reporting its own UI import as unresolved — a warning, so `verify`
+  //     still exits 0, and a warning that trains people to ignore lint output.
+  //
+  //     Read with the comments stripped. These files explain themselves in prose
+  //     that quotes the very setting being checked, and that has now defeated a
+  //     text match three separate times: `springJavaFormat` in the pom, the
+  //     `EI_EXPOSE_REP2` exclusion, and `conditions: ["import"]` here. A check
+  //     that reads a config's own explanation proves nothing.
+  const eslintrc = withoutJavaComments(read("fe/.eslintrc.cjs"));
+  if (!/conditions:\s*\[[^\]]*"import"/.test(eslintrc)) {
+    problems.push(
+      "fe/.eslintrc.cjs does not ask the import resolver for the `import` condition, so a package whose exports map declares only `import` is reported unresolved"
+    );
+  }
+  if (!/extensions:\s*\[[^\]]*"\.css"/.test(eslintrc)) {
+    problems.push("fe/.eslintrc.cjs does not list .css in the resolver's extensions");
+  }
+  const fePkg = parseTemplateJson(read("fe/package.json"), "fe/package.json");
+  const forced = fePkg.overrides && fePkg.overrides["eslint-import-resolver-node"];
+  if (!forced || !/0\.4/.test(String(forced))) {
+    problems.push(
+      "fe/package.json does not override eslint-import-resolver-node to 0.4.x, the only version that reads the `conditions` set in .eslintrc.cjs"
+    );
+  }
+
+  log("✓", "scaffold gates: pom, checkstyle DOCTYPE, minio import, spotbugs filter, quotes, resolver and line endings all agree");
 }
 
 /**

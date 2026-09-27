@@ -6,7 +6,6 @@ import java.net.URI;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -98,7 +97,8 @@ public class DocumentService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("a non-empty file is required");
         }
-        String original = Optional.ofNullable(file.getOriginalFilename()).orElse("").trim();
+        String original =
+                Optional.ofNullable(file.getOriginalFilename()).orElse("").trim();
         if (original.isEmpty()) {
             throw new IllegalArgumentException("the uploaded file has no name");
         }

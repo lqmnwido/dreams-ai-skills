@@ -1,19 +1,16 @@
 package {{BASE_PACKAGE}}.storage;
 
-import java.io.InputStream;
-import java.net.URI;
-
-import org.springframework.stereotype.Service;
-
-import io.minio.GetPresignedObjectUrlArgs;
-import io.minio.MinioClient;
-import io.minio.Method;
-import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
-
 import {{BASE_PACKAGE}}.config.StorageProperties;
 import {{BASE_PACKAGE}}.document.DocumentStorage;
 import {{BASE_PACKAGE}}.document.StorageException;
+import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
+import io.minio.http.Method;
+import java.io.InputStream;
+import java.net.URI;
+import org.springframework.stereotype.Service;
 
 /**
  * The S3 adapter: the only class in this module that knows MinIO exists.
@@ -57,10 +54,7 @@ public class MinioStorageService implements DocumentStorage {
     public Stored store(String objectKey, InputStream content, long size, String contentType) {
         String bucket = properties.requireBucket();
         try {
-            client.putObject(PutObjectArgs.builder()
-                    .bucket(bucket)
-                    .object(objectKey)
-                    .stream(content, size, -1L)
+            client.putObject(PutObjectArgs.builder().bucket(bucket).object(objectKey).stream(content, size, -1L)
                     .contentType(contentType)
                     .build());
         } catch (Exception ex) {
@@ -89,10 +83,8 @@ public class MinioStorageService implements DocumentStorage {
     public void remove(String objectKey) {
         String bucket = properties.requireBucket();
         try {
-            client.removeObject(RemoveObjectArgs.builder()
-                    .bucket(bucket)
-                    .object(objectKey)
-                    .build());
+            client.removeObject(
+                    RemoveObjectArgs.builder().bucket(bucket).object(objectKey).build());
         } catch (Exception ex) {
             throw new StorageException("remove from bucket \"" + bucket + "\" failed for " + objectKey, ex);
         }

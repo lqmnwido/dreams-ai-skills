@@ -1,0 +1,43 @@
+# Line endings are part of this package's contract, not a matter of taste.
+#
+# Version 0.1.0 shipped 97 CRLF files inside the npm tarball. This file is the fix.
+#
+# What happened: the repository was published from a Windows checkout, where
+# `core.autocrlf=true` is the default. Git rewrote every LF file to CRLF on
+# checkout, and `npm publish` packs the working tree rather than the stored blobs.
+# So the tarball carried CRLF even though the repository was stored as LF.
+#
+# What that broke, for every person who ran the installer:
+#
+#   - `npm run verify` in a scaffolded frontend failed on every generated file,
+#     because prettier's default `endOfLine: "lf"` rejects CRLF. The scaffolded
+#     module could not pass the check its own README tells it to run.
+#   - Spotless and Checkstyle read the same CRLF sources, so the backend gate had
+#     a second, independent way to fail.
+#
+# The generated repositories are JavaScript, JSON, YAML, XML and Markdown. A
+# formatter governs every one of them, so LF is the only line ending that can be
+# guaranteed to survive `mvn verify` and `npm run verify` on every contributor's
+# machine regardless of their operating system.
+
+# Normalise everything to LF in the working tree, on every platform.
+* text=auto eol=lf
+
+# The generated backend is Spring Boot: its BOM and every Spring artifact are LF,
+# and a CRLF-patched .mvn/ directory has produced corrupted class files in the
+# wild. Never let a checkout touch it.
+.mvn/** text eol=lf
+*.mvn text eol=lf
+
+# Binary-ish files: leave them exactly as they are. `text=auto` would otherwise try
+# to diff them as text and a stray byte would corrupt them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.jar binary
+*.class binary

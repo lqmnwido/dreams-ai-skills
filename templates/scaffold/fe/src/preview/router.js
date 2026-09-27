@@ -14,5 +14,5 @@ __ROUTES__
 
 export default createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 });

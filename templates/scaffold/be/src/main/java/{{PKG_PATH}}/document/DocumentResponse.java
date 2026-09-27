@@ -14,5 +14,4 @@ import java.net.URI;
  * @param contentType the media type recorded with the object
  * @param url a presigned download location with a limited lifetime
  */
-public record DocumentResponse(String key, long size, String contentType, URI url) {
-}
+public record DocumentResponse(String key, long size, String contentType, URI url) {}
