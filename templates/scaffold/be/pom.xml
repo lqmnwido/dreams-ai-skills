@@ -38,6 +38,7 @@
     <spotless.version>2.44.4</spotless.version>
     <checkstyle.version>3.6.0</checkstyle.version>
     <spotbugs.version>4.8.6.4</spotbugs.version>
+__BE_CI_PROPERTIES__
   </properties>
 
   <dependencies>
@@ -57,11 +58,7 @@
       <version>${minio.version}</version>
     </dependency>
 
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-test</artifactId>
-      <scope>test</scope>
-    </dependency>
+__BE_TEST_DEPENDENCY__
   </dependencies>
 
   <build>
@@ -85,8 +82,7 @@
           <java>
             <includes>
               <include>src/main/java/**/*.java</include>
-              <include>src/test/java/**/*.java</include>
-            </includes>
+__BE_SPOTLESS_TEST_INCLUDE__            </includes>
             <springJavaFormat/>
             <removeUnusedImports/>
             <formatAnnotations/>
@@ -110,11 +106,9 @@
           <configLocation>config/checkstyle/checkstyle.xml</configLocation>
           <consoleOutput>true</consoleOutput>
           <failOnViolation>true</failOnViolation>
-          <includeTestSourceDirectory>true</includeTestSourceDirectory>
-          <sourceDirectories>
+__BE_CHECKSTYLE_TEST_INCLUDE__          <sourceDirectories>
             <sourceDirectory>${project.build.sourceDirectory}</sourceDirectory>
-            <sourceDirectory>${project.build.testSourceDirectory}</sourceDirectory>
-          </sourceDirectories>
+__BE_CHECKSTYLE_TEST_SOURCE__          </sourceDirectories>
         </configuration>
         <executions>
           <execution>

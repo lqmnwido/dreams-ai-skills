@@ -1,0 +1,7 @@
+# {{MODULE_DISPLAY}} — frontend
+
+The gate this pipeline runs. It is the same gate the developer runs locally —
+`npm run verify`, which is `prettier --check` and then `eslint` — so a green
+pull request means the commit was checkable before it was pushed.
+
+__FE_CI_WORKFLOW__

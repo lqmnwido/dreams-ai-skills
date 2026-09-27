@@ -128,7 +128,7 @@ writes back to it.
 
 The same pipeline serves a change request. Only the starting document changes.
 
-### The two rules that make the pipeline real
+### The three rules that make the pipeline real
 
 1. **You may not skip forward.** `CHECK` runs before `TEST`. A test written
    against code that violates a standard is a test of the wrong thing, and it
@@ -136,6 +136,13 @@ The same pipeline serves a change request. Only the starting document changes.
 2. **A stage you skipped is a stage you justify in writing**, in the current
    Change Request, with a reason. "Not applicable" is only true if you can say
    what it would have contained.
+3. **Every stage needs a human sign-off before the next one starts.** An agent
+   proposes; a person approves. The approver has to have seen the artefact the
+   stage produced — not a summary of it — and the approval has to be recorded
+   somewhere findable, usually in the Change Request or in the ADR. Silence is
+   not a yes, a passing test run is not a yes, and the agent that produced the
+   work may not be the one that signs it off. `AGENTS.md` §2.1 says what counts
+   and what does not.
 
 ---
 

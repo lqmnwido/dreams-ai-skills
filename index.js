@@ -39,6 +39,7 @@ const scaffoldLib = require("./lib/scaffold");
 const readmeLib = require("./lib/readme");
 const minioLib = require("./lib/minio");
 const featuresLib = require("./lib/features");
+const reviewLib = require("./lib/review");
 
 const VERSION = require("./package.json").version;
 
@@ -138,8 +139,15 @@ module.exports = {
   buildFlow: questionsLib.buildFlow,
   buildContext: questionsLib.buildContext,
   deriveIdentity: questionsLib.deriveIdentity,
+  questions: questionsLib,
   createPrompter: promptLib.createPrompter,
   UNANSWERED: promptLib.UNANSWERED,
+
+  review: reviewLib,
+  LEVELS: reviewLib.LEVELS,
+  REVIEW_STEPS: reviewLib.STEPS,
+  levelFor: reviewLib.levelFor,
+  levelInfo: reviewLib.levelInfo,
 
   naming: namingLib,
   scaffold: scaffoldLib,

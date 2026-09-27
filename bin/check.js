@@ -35,7 +35,7 @@ function findRepositoryRoot(start) {
  * convention, not values to fill — `skills.reportableTokens` filters them out of
  * every report.
  */
-function run({ quiet = false, self = false } = {}) {
+async function run({ quiet = false, self = false } = {}) {
   const log = (icon, message) => {
     if (!quiet) console.log(`  ${icon} ${message}`);
   };
@@ -43,7 +43,6 @@ function run({ quiet = false, self = false } = {}) {
   const warnings = [];
 
   if (self) return selfCheck(log);
-
   const cwd = process.cwd();
   const root = findRepositoryRoot(cwd) || cwd;
   const docsRoot = path.join(root, skills.GOVERNANCE_DIR);
@@ -260,7 +259,7 @@ function checkReadmeBlocks({ root, state, log, problems, warnings }) {
 
       const range = skills.readme.blockRange(content, mode);
       const current = content.slice(range.start, range.end);
-      const expected = skills.readme.render(mode, rowsForCheck(mode, dir, ctx));
+      const expected = skills.readme.render(mode, observedRows(mode, dir, ctx));
       if (current !== expected) {
         warnings.push(
           `${relative}: the ${mode} table no longer matches what the repository declares — ` +
@@ -285,7 +284,16 @@ function checkReadmeBlocks({ root, state, log, problems, warnings }) {
   if (blocks) log("✓", `${blocks} generated README table(s) present and paired`);
 }
 
-function rowsForCheck(mode, dir, ctx) {
+/**
+ * The rows a block in a real repository should currently hold.
+ *
+ * Code first, intake second: a table that a router and a controller both
+ * describe is the truth, and the derived rows are only what a fresh install sets
+ * out to build. The workspace inventory has no code to read at all — it records
+ * what the intake decided — so it is derived, always.
+ */
+function observedRows(mode, dir, ctx) {
+  if (mode === "workspace") return skills.readme.derivedWorkspace(ctx);
   const detected = mode === "api" ? skills.readme.detectApis(dir) : skills.readme.detectRoutes(dir);
   if (detected.length) return detected;
   return mode === "api" ? skills.readme.derivedApis(ctx) : skills.readme.derivedRoutes(ctx);
@@ -469,8 +477,90 @@ function isDirectory(target) {
   }
 }
 
+/**
+ * No function may be declared twice in this file.
+ *
+ * Both were real: a second `rowsForCheck` was added with a different arity for
+ * the self-check, and function hoisting made it the one every call site reached —
+ * so `check` compared every README block against rows built for a different
+ * directory and reported drift on a table the installer had just written. Nothing
+ * failed loudly, because both callers were satisfied. Two declarations of one
+ * name in one file is always a mistake, whatever the intent.
+ */
+function checkNoShadowedHelpers(problems, log) {
+  const source = fs.readFileSync(__filename, "utf8");
+  const seen = new Map();
+  for (const match of source.matchAll(/^function\s+([A-Za-z0-9_]+)\s*\(/gm)) {
+    const name = match[1];
+    seen.set(name, (seen.get(name) || 0) + 1);
+  }
+  const doubled = [...seen.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+  if (doubled.length) {
+    problems.push(`bin/check.js declares ${doubled.join(", ")} more than once — the later one silently wins`);
+  }
+  log("✓", `no shadowed helper in bin/check.js (${seen.size} functions)`);
+}
+
+/**
+ * The package README is the first thing anybody reads, and a flag it does not
+ * mention is a flag nobody uses.
+ *
+ * The levels are checked against `LEVELS` rather than a hardcoded list, so
+ * renaming one breaks here instead of quietly leaving two documents disagreeing.
+ */
+function checkDocs(problems, log) {
+  const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
+
+  for (const flag of [
+    "--level",
+    "--no-review",
+    "--yes",
+    "--dry-run",
+    "--force",
+    "--check",
+    "--uninstall",
+    "--quiet",
+    "--minio",
+    "--bucket",
+    "--no-readme"
+  ]) {
+    if (!readme.includes(flag)) problems.push(`the package README never mentions ${flag}`);
+  }
+
+  for (const level of skills.LEVELS) {
+    if (!readme.includes(level.label)) problems.push(`the package README never mentions the ${level.label} level`);
+    if (!readme.includes(String(level.digit))) {
+      problems.push(`the package README never shows the digit for ${level.label}`);
+    }
+  }
+
+  // The claim that a level never shrinks the tree is the one that must be
+  // written down, because it is the one a reader cannot check by looking.
+  if (!/never (shrinks|removes) the governance tree|never a governance document/i.test(readme)) {
+    problems.push("the package README does not say that a level never shrinks the governance tree");
+  }
+
+  // The three documented counts, cross-checked against the plan for a
+  // one-sub-module module pair — the shape the README's table describes.
+  const context = syntheticContext();
+  context.SUBMODULES = "program/senarai-program";
+  const counts = ["economy", "recommended", "full"].map(
+    (level) => skills.scaffold.plan(context, { level }).files.length
+  );
+  for (const count of counts) {
+    if (!readme.includes(`**${count}**`)) {
+      problems.push(`the package README does not state the ${count}-file scaffold for a level`);
+    }
+  }
+  if (counts[0] >= counts[1] || counts[1] >= counts[2]) {
+    problems.push(`the documented scaffold counts are not increasing: ${counts.join(" / ")}`);
+  }
+
+  log("✓", `package README documents the three levels, ${counts.join(" / ")} scaffold files, and every behaviour flag`);
+}
+
 /** `--self` validates the package itself, so `npm test` is meaningful. */
-function selfCheck(log) {
+async function selfCheck(log) {
   const problems = [];
 
   const manifest = skills.manifest();
@@ -501,6 +591,12 @@ function selfCheck(log) {
   if (missingSteps.length) problems.push(`governance README misses pipeline step(s): ${missingSteps.map((p) => p.step).join(", ")}`);
   else log("✓", "governance README documents every pipeline step");
 
+  // The governance README is where somebody lands who wants to know whether an
+  // agent is allowed to continue on its own. It has to say no.
+  if (!/human sign-off/i.test(readme)) {
+    problems.push("the governance README does not require a human sign-off between stages");
+  }
+
   const sample = skills.render("{{MODULE_NAME}} / {{ROUTE_PREFIX}}", { MODULE_NAME: "v2t", ROUTE_PREFIX: "/v2t" });
   if (sample.text !== "v2t / /v2t") problems.push("renderer does not substitute correctly");
   const missingTok = skills.render("{{NOPE}}", {});
@@ -510,11 +606,50 @@ function selfCheck(log) {
   log("✓", "renderer substitutes and preserves correctly");
 
   checkScaffoldTemplates(problems, log);
+  checkNoShadowedHelpers(problems, log);
+  checkDocs(problems, log);
+  await checkScaffoldLevels(problems, log);
+  await checkReviewGates(problems, log);
+  checkIntakeTiers(problems, log);
+  checkSignOffContract(agents, problems, log);
   checkReadmeRendering(problems, log);
   checkMinioSurface(problems, log);
 
   report(problems, [], false);
   process.exitCode = problems.length ? 1 : 0;
+}
+
+/**
+ * The human sign-off rule has to be in the file every agent reads first, and it
+ * has to say something an agent cannot talk its way past.
+ *
+ * The wording is a judgement call, but the presence of these four things is not:
+ * a stage gate, a person, a record, and a prohibition on self-approval. A file
+ * that says "get approval" without saying what counts as approval is the version
+ * agents wave through.
+ */
+function checkSignOffContract(agents, problems, log) {
+  if (!agents) return;
+  const required = [
+    { test: /sign-off/i, why: "the phrase 'sign-off' — the gate has to be nameable to be enforced" },
+    { test: /human/i, why: "a named person, not an agent" },
+    { test: /self-approve/i, why: "an explicit prohibition on the agent approving its own work" },
+    { test: /silence is not a yes/i, why: "a statement that silence is not approval" }
+  ];
+  for (const rule of required) {
+    if (!rule.test.test(agents)) problems.push(`templates/AGENTS.md is missing ${rule.why}`);
+  }
+
+  // The installer's own levels have to be described where an agent will look for
+  // them, or the agent picks a level without knowing what it costs.
+  for (const fragment of ["Recommended", "Economy", "Full"]) {
+    if (!agents.includes(fragment)) problems.push(`templates/AGENTS.md does not document the ${fragment} level`);
+  }
+  if (!/never removes a document|never a smaller|always/i.test(agents)) {
+    problems.push("templates/AGENTS.md does not say that a level never shrinks the governance tree");
+  }
+
+  log("✓", "AGENTS.md carries the human sign-off gate and the three review levels");
 }
 
 /**
@@ -557,8 +692,395 @@ function syntheticContext() {
     REPO_NAME: "module-demo",
     OWNER: "platform",
     DEPLOY_TARGET: "container",
-    BLAST_RADIUS: "shell"
+    BLAST_RADIUS: "shell",
+    INSTALL_DATE: "2026-01-31"
   });
+}
+
+/**
+ * The three levels must mean three different things, and the differences must be
+ * the *files*, not just the prose.
+ *
+ * A level that only changed the wording would be a lie with a prompt in front of
+ * it: somebody picks Economy to get a smaller install, and gets the same one
+ * plus an explanation of why it is small. So the assertions below are about
+ * counts and about what a generated file claims — a `mvn verify` line promising
+ * tests in a repository that has none is the exact failure this catches.
+ */
+async function checkScaffoldLevels(problems, log) {
+  const context = syntheticContext();
+  const plans = {};
+  for (const level of ["economy", "recommended", "full"]) {
+    try {
+      plans[level] = skills.scaffold.plan(context, { level });
+    } catch (err) {
+      problems.push(`scaffold plan at ${level} threw: ${err.message}`);
+      return;
+    }
+  }
+
+  const counts = Object.fromEntries(Object.entries(plans).map(([level, plan]) => [level, plan.files.length]));
+  if (!(counts.economy < counts.recommended && counts.recommended < counts.full)) {
+    problems.push(`the levels do not change the size of the scaffold: ${JSON.stringify(counts)}`);
+  }
+
+  for (const [level, plan] of Object.entries(plans)) {
+    if (plan.level !== level) problems.push(`plan at ${level} reports level ${plan.level}`);
+    if (plan.unresolvedPaths.length) {
+      problems.push(`scaffold paths at ${level} did not resolve: ${plan.unresolvedPaths.join(", ")}`);
+    }
+    if (plan.unresolvedTokens.length) {
+      problems.push(
+        `scaffold tokens at ${level} did not resolve: ${plan.unresolvedTokens.map((t) => `{{${t}}}`).join(", ")}`
+      );
+    }
+    const leftovers = new Set();
+    for (const file of plan.files) {
+      for (const token of skills.reportableTokens(skills.collectTokens(file.content))) leftovers.add(token);
+    }
+    if (leftovers.size) {
+      problems.push(
+        `scaffold files at ${level} still contain placeholders: ${[...leftovers].map((t) => `{{${t}}}`).join(", ")}`
+      );
+    }
+    for (const file of plan.files) {
+      if (/__[A-Z_]+__/.test(file.content)) {
+        problems.push(`scaffold file at ${level} still contains an unsubstituted directive: ${file.relative}`);
+        break;
+      }
+    }
+  }
+
+  const names = (level) => plans[level].files.map((file) => file.relative);
+  const economy = new Set(names("economy"));
+  const full = new Set(names("full"));
+
+  const dropped = [
+    `${context.BACKEND_REPO}/src/test/java/com/dreams/module_demo/ModuleDemoApplicationTests.java`,
+    `${context.BACKEND_REPO}/.editorconfig`
+  ];
+  for (const relative of dropped) {
+    if (economy.has(relative)) problems.push(`economy still writes ${relative}`);
+    if (!full.has(relative)) problems.push(`full is missing ${relative}`);
+  }
+
+  const added = [
+    `${context.FRONTEND_REPO}/CHANGELOG.md`,
+    `${context.BACKEND_REPO}/CHANGELOG.md`,
+    `${context.FRONTEND_REPO}/.github/workflows/verify.yml`,
+    `${context.BACKEND_REPO}/.github/workflows/verify.yml`
+  ];
+  for (const relative of added) {
+    if (economy.has(relative)) problems.push(`economy writes ${relative}, which is a Full-level extra`);
+    if (!full.has(relative)) problems.push(`full is missing ${relative}`);
+  }
+
+  // The build must be true of itself. Economy has no tests, so it may not carry
+  // a test dependency, a test include, or a sentence about tests.
+  const pom = (level) => plans[level].files.find((file) => file.relative.endsWith("/pom.xml")).content;
+  const readme = (level) => plans[level].files.find((file) => file.relative.endsWith("_be/README.md")).content;
+
+  const economyPom = pom("economy");
+  for (const fragment of ["spring-boot-starter-test", "src/test/java", "includeTestSourceDirectory", "testSourceDirectory"]) {
+    if (economyPom.includes(fragment)) {
+      problems.push(`the economy pom still references tests (${fragment}) after dropping them`);
+    }
+  }
+  for (const level of ["recommended", "full"]) {
+    for (const fragment of ["spring-boot-starter-test", "src/test/java", "includeTestSourceDirectory"]) {
+      if (!pom(level).includes(fragment)) {
+        problems.push(`the ${level} pom lost ${fragment}, so mvn verify no longer runs tests`);
+      }
+    }
+  }
+  if (!economyReadmeMentions(readme("economy"), "tests")) {
+    problems.push("the economy README still promises tests in `mvn verify`");
+  }
+  if (!fullReadmeMentions(readme("full"), "tests")) {
+    problems.push("the full README does not mention tests in `mvn verify`");
+  }
+  for (const level of ["economy", "recommended"]) {
+    if (readme(level).includes("Scaffold level | `Full`")) {
+      problems.push(`the ${level} README contains the Full-only inventory table`);
+    }
+  }
+  if (!readme("full").includes("## Inventory")) {
+    problems.push("the full README has no inventory section");
+  }
+
+  log(
+    "✓",
+    `levels change the scaffold: ${counts.economy} / ${counts.recommended} / ${counts.full} files, ` +
+      "and each build describes itself accurately"
+  );
+}
+
+function economyReadmeMentions(text, word) {
+  return !new RegExp(`\\b${word}\\b`).test(text.split("## Inventory")[0].split("mvn verify")[1] || "");
+}
+
+function fullReadmeMentions(text, word) {
+  return new RegExp(`\\b${word}\\b`).test(text.split("## Inventory")[0].split("mvn verify")[1] || "");
+}
+
+/**
+ * A gate is only worth having if it says three things and returns one of them.
+ *
+ * These checks are about the *mechanics* — the digits, the recording of who
+ * chose, the refusal to be quiet in a non-interactive run without saying so —
+ * because those are the parts that fail silently. The wording of a gate is read
+ * by people and cannot be asserted, only kept honest by having it say what the
+ * step is about to do.
+ */
+async function checkReviewGates(problems, log) {
+  const levels = skills.LEVELS;
+  if (levels.length !== 3) problems.push(`expected 3 review levels, found ${levels.length}`);
+  if (levels.map((level) => level.digit).join(",") !== "1,2,3") {
+    problems.push(`review levels must be numbered 1, 2, 3 in that order, got ${levels.map((l) => l.digit).join(", ")}`);
+  }
+  if (levels.map((level) => level.id).join(",") !== "recommended,economy,full") {
+    problems.push(`review levels are not recommended/economy/full in order: ${levels.map((l) => l.id).join(", ")}`);
+  }
+
+  for (const [input, expected] of [
+    ["1", "recommended"],
+    ["2", "economy"],
+    ["3", "full"],
+    ["full", "full"],
+    ["FULL", "full"],
+    ["  economy  ", "economy"],
+    [undefined, null],
+    ["", null],
+    ["nonsense", null]
+  ]) {
+    const got = skills.levelFor(input);
+    if (got !== expected) problems.push(`levelFor(${JSON.stringify(input)}) is ${got}, expected ${expected}`);
+  }
+
+  const steps = skills.REVIEW_STEPS;
+  const ids = steps.map((step) => step.id);
+  if (ids.length !== 8) problems.push(`expected a gate for all 8 install stages, found ${ids.length}: ${ids.join(", ")}`);
+  if (new Set(ids).size !== ids.length) problems.push("two review gates share an id");
+
+  // Every stage the installer announces must have a gate, and every gate must
+  // announce a stage. A stage that skipped the question is the failure this
+  // catches, and it is only visible by reading the two lists against each other.
+  const installer = fs.readFileSync(path.join(__dirname, "install.js"), "utf8");
+  const announced = [...installer.matchAll(/heading\((["'`])\s*(\d+)\.\s*([A-Za-z][A-Za-z]*)/g)].map((m) => ({
+    number: m[2],
+    title: m[3]
+  }));
+  const gated = [...installer.matchAll(/id:\s*"([a-z]+)",\s*\n\s*title:\s*"(\d+)\.\s*([A-Za-z]+)/g)].map((m) => ({
+    id: m[1],
+    number: m[2],
+    title: m[3]
+  }));
+  if (announced.length !== ids.length) {
+    problems.push(`${announced.length} install stage(s) announced but ${ids.length} review gate(s) declared`);
+  }
+  for (const stage of announced) {
+    const gate = gated.find((entry) => entry.number === stage.number);
+    if (!gate) {
+      problems.push(`install stage "${stage.number}. ${stage.title}" has no review gate`);
+      continue;
+    }
+    if (gate.title !== stage.title) {
+      problems.push(`the gate for stage ${stage.number} is titled "${gate.title}", the stage is "${stage.title}"`);
+    }
+  }
+  for (const step of steps) {
+    const stage = announced.find((entry) => entry.number === step.title.split(".")[0]);
+    if (!stage) problems.push(`review gate "${step.id}" titles a stage the installer never announces`);
+  }
+
+  const collected = [];
+  const out = { log: (line) => collected.push(line) };
+
+  // A non-interactive run must be loud about which level it used, and must say
+  // it was a default rather than a choice.
+  const quietReview = skills.review.createReview({ flags: {}, interactive: false, out });
+  const assumed = await quietReview.gate({
+    id: "scaffold",
+    title: "5. Scaffold",
+    writes: ["write 41 files"],
+    effects: { economy: "fewer", recommended: "the same", full: "more" }
+  });
+  if (assumed !== "recommended") problems.push(`a non-interactive gate chose ${assumed}, expected recommended`);
+  if (!collected.join("\n").includes("no terminal to ask")) {
+    problems.push("a non-interactive gate did not say it had nobody to ask");
+  }
+  if (quietReview.summary().steps.scaffold.source !== "assumed") {
+    problems.push("a non-interactive gate did not record its choice as assumed");
+  }
+
+  // A typed answer, including the digit, must win over everything else.
+  const answered = [];
+  const asked = skills.review.createReview({
+    flags: {},
+    interactive: true,
+    out: { log: (line) => answered.push(line) },
+    prompter: { askLine: () => Promise.resolve("2") }
+  });
+  const chosen = await asked.gate({
+    id: "readme",
+    title: "6. README",
+    writes: ["write a table"],
+    effects: { economy: "none", recommended: "one", full: "three" }
+  });
+  if (chosen !== "economy") problems.push(`answering 2 chose ${chosen}, expected economy`);
+  if (asked.summary().steps.readme.source !== "asked") {
+    problems.push("an answered gate did not record its choice as asked");
+  }
+  const transcript = answered.join("\n");
+  for (const fragment of ["write a table", "Economy", "Recommended", "Full"]) {
+    if (!transcript.includes(fragment)) problems.push(`the gate transcript is missing "${fragment}"`);
+  }
+
+  // An explicit level answers every gate, says so, and never asks.
+  let askedCount = 0;
+  const pinned = skills.review.createReview({
+    flags: { level: "full" },
+    interactive: true,
+    out,
+    prompter: {
+      askLine: () => {
+        askedCount += 1;
+        return Promise.resolve(null);
+      }
+    }
+  });
+  for (const step of steps) {
+    const level = await pinned.gate({
+      id: step.id,
+      title: step.title,
+      writes: ["write something"],
+      effects: { economy: "less", recommended: "the same", full: "more" }
+    });
+    if (level !== "full") problems.push(`--level=full produced ${level} at ${step.id}`);
+  }
+  if (askedCount) problems.push(`--level=full still asked ${askedCount} time(s)`);
+
+  // A terminal that closes mid-question is not a person who chose. The gate has
+  // to say the level was assumed, and the record has to say `assumed` — otherwise
+  // `.docs/install.json` claims a sign-off nobody gave.
+  const closed = [];
+  const abandoned = skills.review.createReview({
+    flags: {},
+    interactive: true,
+    out: { log: (line) => closed.push(line) },
+    prompter: { askLine: () => Promise.resolve(null) }
+  });
+  await abandoned.gate({
+    id: "plan",
+    title: "3. Plan",
+    writes: ["write nothing"],
+    effects: { economy: "less", recommended: "the same", full: "more" }
+  });
+  if (abandoned.summary().steps.plan.source !== "assumed") {
+    problems.push("a gate nobody answered was recorded as a choice");
+  }
+  if (!closed.join("\n").includes("nothing was answered")) {
+    problems.push("a gate nobody answered did not say so");
+  }
+
+  // A step with nothing to do must say so rather than offer a choice.
+  const notApplicable = [];
+  const inapplicable = skills.review.createReview({
+    flags: {},
+    interactive: true,
+    out: { log: (line) => notApplicable.push(line) },
+    prompter: { askLine: () => Promise.resolve("3") }
+  });
+  const level = await inapplicable.gate({
+    id: "minio",
+    title: "7. MinIO",
+    applicable: false,
+    skipReason: "no backend in this install",
+    effects: {}
+  });
+  if (level !== "recommended") problems.push(`an inapplicable gate returned ${level}`);
+  if (!notApplicable.join("\n").includes("no backend in this install")) {
+    problems.push("an inapplicable gate did not say why it was skipped");
+  }
+
+  // A mistyped step id is a bug in the installer, not a skipped review.
+  let threw = false;
+  try {
+    await skills.review.createReview({ flags: {}, interactive: false, out }).gate({ id: "nope", effects: {} });
+  } catch (err) {
+    threw = true;
+  }
+  if (!threw) problems.push("a gate for an unknown step did not fail");
+
+  // The unit checks above hand the review a prompter directly. The installer has
+  // to do the same, and nothing else in the suite can tell: without it every
+  // gate falls back to "no terminal to ask" and an interactive run silently
+  // installs at Recommended with the question never printed.
+  const source = fs.readFileSync(path.join(__dirname, "install.js"), "utf8");
+  const created = source.match(/createReview\(\{([^}]*)\}\)/);
+  if (!created || !/prompter/.test(created[1])) {
+    problems.push("bin/install.js creates the review without a prompter, so no gate can ever ask");
+  }
+
+  log("✓", `review gates: 3 levels, ${steps.length} steps, asked / assumed / pinned all recorded`);
+}
+
+/**
+ * The intake's questions are the only place a person types anything. A tier that
+ * does not change the list is a level that only changes the word "Full".
+ */
+function checkIntakeTiers(problems, log) {
+  const existing = {
+    isNew: false,
+    kind: "remote-module",
+    federation: { name: "v2t", exposes: [], remotes: [] },
+    metadata: { remoteName: "v2t", routePrefix: "/v2t" },
+    ui: { isGit: true, dependency: "git+https://example/ui.git#main" },
+    env: { keys: ["VUE_APP_URL_KOD", "PORT"], sources: [{ file: ".env.example", keys: [] }] },
+    package: { scripts: { serve: "vue-cli-service serve --port 3002" } }
+  };
+  const fresh = { isNew: true, kind: "new", federation: { name: "", exposes: [], remotes: [] }, metadata: {}, ui: {}, env: { keys: [], sources: [] }, package: {} };
+
+  for (const [name, detected] of [["new", fresh], ["existing", existing]]) {
+    const counts = {};
+    for (const level of ["economy", "recommended", "full"]) {
+      const flow = skills.buildFlow(detected, { level });
+      counts[level] = flow.questions.length;
+      if (!flow.questions.length) problems.push(`the ${level} ${name} flow has no questions at all`);
+    }
+    if (counts.full <= counts.recommended) {
+      problems.push(`the ${name} intake does not grow at the full level: ${JSON.stringify(counts)}`);
+    }
+    if (counts.recommended !== counts.economy) {
+      problems.push(`the ${name} intake changes at the economy level: ${JSON.stringify(counts)}`);
+    }
+
+    const full = skills.buildFlow(detected, { level: "full" }).questions.map((q) => q.key);
+    const recommended = skills.buildFlow(detected, { level: "recommended" }).questions.map((q) => q.key);
+    const extras = full.filter((key) => !recommended.includes(key));
+    for (const key of extras) {
+      const question = skills.questions.FULL_IDENTITY_QUESTIONS.concat(skills.questions.NEW_QUESTIONS).find(
+        (entry) => entry.key === key
+      );
+      if (!question || question.tier !== "full") {
+        problems.push(`question ${key} is only asked at the full level but is not marked as such`);
+      }
+    }
+  }
+
+  // The Full-only confirmations must be pre-filled from the repository, or they
+  // are six prompts asking somebody to retype what the machine already read.
+  const flow = skills.buildFlow(existing, { level: "full" });
+  const context = { detected: existing, flow: "existing", level: "full" };
+  for (const question of flow.questions) {
+    if (question.tier !== "full") continue;
+    const value = typeof question.default === "function" ? question.default(context) : question.default;
+    if (value === undefined || value === null || value === "") {
+      problems.push(`the full-only question ${question.key} has no detected default to offer`);
+    }
+  }
+
+  log("✓", `intake tiers: recommended asks the base flow, full adds ${skills.questions.FULL_IDENTITY_QUESTIONS.length} confirmations`);
 }
 
 /** The scaffold must expand completely, or a fresh repository starts broken. */
@@ -642,7 +1164,7 @@ function checkScaffoldTemplates(problems, log) {
     problems.push(`scaffold does not produce: ${absent.join(", ")}`);
   }
 
-  log("✓", `scaffold expands cleanly: ${plan.files.length} files (${expected.fe} fe / ${expected.be} be)`);
+  log("✓", `scaffold expands cleanly at recommended: ${plan.files.length} files (${expected.fe} fe / ${expected.be} be)`);
 
   checkGeneratedEndpoints(plan, context, problems, log);
 }
@@ -694,12 +1216,24 @@ function checkGeneratedEndpoints(plan, context, problems, log) {
   }
 }
 
+/**
+ * The rows a table is rendered from, per block mode.
+ *
+ * Routes and API rows are read out of code; the workspace inventory has no code
+ * to read, so it comes from the intake. A mode that falls through to the wrong
+ * one here would put a route table where a repository inventory belongs.
+ */
+function rowsForBlock(mode, context) {
+  if (mode === "api") return skills.readme.derivedApis(context);
+  if (mode === "workspace") return skills.readme.derivedWorkspace(context);
+  return skills.readme.derivedRoutes(context);
+}
+
 /** The marker blocks must pair inside the markdown they are written into. */
 function checkReadmeRendering(problems, log) {
   const context = syntheticContext();
   for (const mode of Object.keys(skills.README_BLOCKS)) {
-    const rows =
-      mode === "api" ? skills.readme.derivedApis(context) : skills.readme.derivedRoutes(context);
+    const rows = rowsForBlock(mode, context);
     if (!rows.length) {
       problems.push(`derived ${mode} rows are empty`);
       continue;
@@ -712,7 +1246,7 @@ function checkReadmeRendering(problems, log) {
       problems.push(`${mode} rendering does not mention the module slug`);
     }
   }
-  log("✓", "README marker blocks render paired and named");
+  log("✓", `README marker blocks render paired and named (${Object.keys(skills.README_BLOCKS).length} modes)`);
 }
 
 /** Object storage help must name this module's bucket, or it is generic advice. */

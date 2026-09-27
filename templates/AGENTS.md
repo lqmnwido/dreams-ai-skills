@@ -40,6 +40,11 @@ If any of those is missing, stop and say so. Do not proceed from an assumption.
 Determine it.** The two flows below are different, and running the wrong one is
 the single most common way this harness gets misused.
 
+**Everything you do is a stage, and every stage needs a human sign-off** (§2.1).
+That includes the ones below: a classification you got wrong, a plan you built
+without showing it, a document you filled in on somebody's behalf. Propose, then
+wait. If the user asked for something small, that is still a proposal.
+
 ### 1.1 Detect
 
 Run this classification before anything else. Report the verdict and the evidence
@@ -140,7 +145,9 @@ and in the same order:
 1. **README table.** The routes table (`<!-- routes:start -->`) goes in
    `<slug>_fe/README.md`, the API table (`<!-- api:start -->`) in
    `<slug>_be/README.md`. Generated from `vue.config.js` exposes and from the
-   Spring `@*Mapping` annotations — never from memory.
+   Spring `@*Mapping` annotations — never from memory. At the Full level a third
+   table, `<!-- workspace:start -->`, goes in the workspace `README.md` and
+   records which repository is which.
 2. **Scaffolding.** `<slug>_fe` and `<slug>_be` are written from the package's
    templates. Existing files are kept; `--force` backs up before replacing.
 3. **Object storage.** Detect MinIO at `MINIO_ENDPOINT` (default
@@ -149,6 +156,22 @@ and in the same order:
    then create the bucket named after the slug. The bucket name is not typed
    twice: it comes from `--slug` or `--bucket` and the service reads the same
    value from its own `.env`.
+
+**The user picks a level before each of those steps: 1 = Recommended,
+2 = Economy, 3 = Full.** Report what the step will produce, then ask. A level
+changes *scope*, never the rules:
+
+| | Recommended | Economy | Full |
+| --- | --- | --- | --- |
+| 33 governance documents | yes | **yes — always** | yes |
+| Scaffold | full | no test sources, no `.editorconfig` | + CI, CHANGELOG, pinned tool versions |
+| README tables | per repository | none | + the workspace inventory |
+| Object storage | detect, ask, create | untouched | create, then prove it is writable |
+| Reporting | the counts | the counts | the counts, the answers, the decisions |
+
+Economy never removes a document. A missing rule is not a lighter install; it is
+a hole an agent reads as a fact. If the user wants less work, say so and let them
+decide — do not quietly choose a smaller tree yourself.
 
 ### 1.3 Flow B — EXISTING module
 
@@ -196,6 +219,13 @@ Work moves through these stages in this order. Each stage has an entry document.
 Skipping a stage is allowed only with a written reason in the current Change
 Request.
 
+**Every stage needs a human sign-off before the next one starts.** An agent
+proposes; a person approves. "The tests pass" is not a sign-off, and neither is
+the agent's own account of what it is about to do — the person approving has to
+have seen the stage's output, or the artefact it is about to change. This is not
+politeness: it is the only thing standing between a plausible guess and a
+committed contract.
+
 | # | Stage | Document | Produces |
 | --- | --- | --- | --- |
 | 1 | **PRD** | `01-product/PRD.md` | Why the product/module exists. No implementation. |
@@ -213,6 +243,34 @@ Request.
 For a `change-request` or `debug` scope, the pipeline starts at step 3 with a
 fresh entry in `01-product/CHANGE-REQUEST/` or `06-quality/DEBUG.md` — one file
 per request, never a single overwritten file.
+
+### 2.1 Sign-off: what a person actually has to do
+
+A stage is signed off when a person has, in this order:
+
+1. **Seen the output.** The artefact itself, not a summary of it. For ARCHITECT
+   that is the design; for TEST that is the run, passing or failing.
+2. **Answered three questions.** What changes for a user? What breaks if this is
+   wrong? What was deliberately left out?
+3. **Said yes** — a reply, a review approval, a line in the Change Request.
+   Silence is not a yes, and a green pipeline is not either: `mvn verify` passing
+   means the code compiles, not that it should exist.
+
+Record who approved and when, in the Change Request or in the ADR for any
+contested decision. An unrecorded approval cannot be audited, and one nobody can
+find is indistinguishable from one that never happened.
+
+Two things an agent may **not** do here, whatever the pressure:
+
+- **Self-approve.** If the agent that produced the artefact also signs it off,
+  the gate is a formality and every rule in this file becomes advisory. Say
+  "waiting for sign-off" and stop.
+- **Split the work to get under the gate.** One request that touches two stages
+  is two sign-offs, not one — and it is exactly the change nobody looked at
+  closely that the gate exists to catch.
+
+A smaller job is not a smaller gate. "Just add the flag" is still a stage, and it
+still needs a person to say yes before the next one starts.
 
 ---
 

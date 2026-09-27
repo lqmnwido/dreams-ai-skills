@@ -57,3 +57,5 @@ src/
 ├── views/                   one file per exposed page
 └── services/{{MODULE_SNAKE}}/  this module's transport layer
 ```
+
+__INVENTORY__

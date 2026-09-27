@@ -1,0 +1,14 @@
+# {{MODULE_DISPLAY}} — backend
+
+The gate this pipeline runs. It is the same gate the developer runs locally —
+`mvn --batch-mode verify` — and it fails on the same things, so a green pull
+request means the commit was checkable before it was pushed.
+
+Maven, the plugins and the JDK are pinned in `pom.xml` as `pin.*` properties, so
+this run resolves exactly the versions a laptop does. The action majors below are
+pinned inline for the same reason: a workflow that floats onto
+`actions/checkout@v5` is a build that changed without anybody editing a build
+file. The versions and why they are these ones are in
+`.docs/project-governance/05-development/TOOLS.md`.
+
+__BE_CI_WORKFLOW__

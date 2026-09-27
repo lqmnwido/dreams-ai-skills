@@ -49,13 +49,12 @@ for what to do when MinIO is not running locally.
 ```bash
 mvn spring-boot:run        # run the service
 mvn spotless:apply         # fix formatting (the mechanical fix, never hand-edit)
-mvn verify                 # format + checkstyle + spotbugs + tests
+__VERIFY_LINE__
 ```
 
-`mvn verify` is the gate. It fails on formatting, on structure, on analysis and
-on tests — in that order, so the first failure is always the cheapest one to
-fix. The rules are in
-`.docs/project-governance/05-development/FORMAT-LINT.md`.
+`mvn verify` is the gate.
+__VERIFY_CLAUSE__
+The rules are in `.docs/project-governance/05-development/FORMAT-LINT.md`.
 
 ## Layout
 
@@ -70,3 +69,5 @@ src/main/java/{{PKG_PATH}}/
 
 Dependencies point inwards: `storage` knows about `document`, never the reverse.
 `09-backend/SPRING-BOOT.md` is the standard this layout follows.
+
+__INVENTORY__
