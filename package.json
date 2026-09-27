@@ -1,0 +1,39 @@
+{
+  "name": "@lqmnwido/dreams-ai-skills",
+  "version": "0.1.0",
+  "description": "Per-repository AI governance skills for the D-ReAMS micro-frontend platform. npx it into a Shell, a frontend module, the shared UI package, or a backend API to generate AGENTS.md and .docs/project-governance/**.",
+  "main": "index.js",
+  "bin": {
+    "dreams-ai-skills": "bin/install.js",
+    "dreams-ai-skills-install": "bin/install.js",
+    "dreams-ai-skills-uninstall": "bin/uninstall.js",
+    "dreams-ai-skills-check": "bin/check.js"
+  },
+  "scripts": {
+    "test": "node bin/check.js --self"
+  },
+  "keywords": [
+    "dreams",
+    "micro-frontend",
+    "module-federation",
+    "vue",
+    "agents",
+    "agents-md",
+    "sdlc",
+    "governance",
+    "lqmnwido"
+  ],
+  "author": "lqmnwido",
+  "license": "UNLICENSED",
+  "private": false,
+  "files": [
+    "bin/",
+    "lib/",
+    "templates/",
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}
